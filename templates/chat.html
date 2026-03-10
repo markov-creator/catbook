@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">💬 צ'אט עם {{ friend.username }}</h1>
+  <a href="{{ url_for('friends') }}" class="btn btn-secondary">← חזרה לחברים</a>
+</div>
+
+<div class="chat-window" id="chat-window">
+  {% if messages %}
+    {% for msg in messages %}
+      <div class="chat-bubble {% if msg.sender_id == uid %}chat-bubble--mine{% else %}chat-bubble--theirs{% endif %}">
+        {% if msg.content %}<div class="chat-text">{{ msg.content }}</div>{% endif %}
+        {% if msg.image %}
+          <img src="{{ url_for('static', filename='uploads/' + msg.image) }}" class="chat-img" alt="תמונה">
+        {% endif %}
+        <div class="chat-time">{{ msg.sent_at[:16].replace('T', ' ') }}</div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="chat-empty">אין הודעות עדיין — שלח הודעה ראשונה!</div>
+  {% endif %}
+</div>
+
+<div class="chat-image-preview" id="chat-image-preview" style="display:none">
+  <img id="chat-preview-img" src="" alt="">
+  <button type="button" class="chat-image-preview-remove" onclick="clearImage()">✕ הסר</button>
+</div>
+
+<form id="chat-form" enctype="multipart/form-data">
+  <input type="file" id="chat-image-input" name="image" accept="image/*" style="display:none">
+  <div class="chat-form">
+    <button type="button" class="chat-attach-btn" onclick="document.getElementById('chat-image-input').click()" title="שלח תמונה">📎</button>
+    <input type="text" name="content" placeholder="כתוב הודעה..." autocomplete="off" class="chat-input" id="chat-input">
+    <button type="submit" class="btn">שלח</button>
+  </div>
+</form>
+
+<script>
+  const win = document.getElementById('chat-window');
+  win.scrollTop = win.scrollHeight;
+  document.getElementById('chat-input').focus();
+
+  const SEND_URL = '{{ url_for("chat", friend_id=friend.id) }}';
+
+  document.getElementById('chat-image-input').addEventListener('change', function() {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('chat-preview-img').src = e.target.result;
+      document.getElementById('chat-image-preview').style.display = 'flex';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  function clearImage() {
+    document.getElementById('chat-image-input').value = '';
+    document.getElementById('chat-image-preview').style.display = 'none';
+    document.getElementById('chat-preview-img').src = '';
+  }
+
+  document.getElementById('chat-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const content = document.getElementById('chat-input').value.trim();
+    const imageInput = document.getElementById('chat-image-input');
+    const hasImage = imageInput.files.length > 0;
+    if (!content && !hasImage) return;
+
+    const localPreview = hasImage ? document.getElementById('chat-preview-img').src : null;
+    const fd = new FormData(this);
+    const btn = this.querySelector('button[type="submit"]');
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(SEND_URL, {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!data.success) return;
+
+      // Build bubble
+      const empty = document.querySelector('.chat-empty');
+      if (empty) empty.remove();
+
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-bubble chat-bubble--mine';
+
+      if (content) {
+        const txt = document.createElement('div');
+        txt.className = 'chat-text';
+        txt.textContent = content;
+        bubble.appendChild(txt);
+      }
+      if (localPreview) {
+        const img = document.createElement('img');
+        img.src = localPreview;
+        img.className = 'chat-img';
+        img.alt = 'תמונה';
+        bubble.appendChild(img);
+      }
+
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const timeStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      const time = document.createElement('div');
+      time.className = 'chat-time';
+      time.textContent = timeStr;
+      bubble.appendChild(time);
+
+      win.appendChild(bubble);
+      win.scrollTop = win.scrollHeight;
+
+      document.getElementById('chat-input').value = '';
+      clearImage();
+    } finally {
+      btn.disabled = false;
+      document.getElementById('chat-input').focus();
+    }
+  });
+</script>
+
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="auth-container">
+  <h1 class="auth-title">הרשמה</h1>
+  <form method="POST" autocomplete="off">
+    <div class="form-group">
+      <label for="username">שם משתמש</label>
+      <input type="text" id="username" name="username" required placeholder="בחר שם משתמש" autofocus>
+    </div>
+    <div class="form-group">
+      <label for="password">סיסמה</label>
+      <input type="password" id="password" name="password" required placeholder="בחר סיסמה">
+    </div>
+    <button type="submit" class="btn btn-full">הירשם</button>
+  </form>
+  <div class="auth-link">
+    כבר יש לך חשבון? <a href="{{ url_for('login') }}">התחבר כאן</a>
+  </div>
+</div>
+{% endblock %}

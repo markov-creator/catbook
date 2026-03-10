@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">פרטים — {{ cat.name }}</h1>
+  <a href="{{ url_for('cats') }}" class="btn btn-secondary">← חזרה</a>
+</div>
+
+{% if is_owner %}
+<form method="POST" action="{{ url_for('cat_details_page', cat_id=cat.id) }}" class="cat-details-page-form">
+{% else %}
+<div class="cat-details-page-form">
+{% endif %}
+
+  <table class="cat-details-table cat-details-table--full">
+    <tr>
+      <th>מין</th>
+      <td>
+        {% if is_owner %}
+        <div class="cat-detail-radios">
+          <label><input type="radio" name="gender" value="זכר" {% if d.get('gender')=='זכר' %}checked{% endif %}> זכר</label>
+          <label><input type="radio" name="gender" value="נקבה" {% if d.get('gender')=='נקבה' %}checked{% endif %}> נקבה</label>
+          <label><input type="radio" name="gender" value="" {% if not d.get('gender') %}checked{% endif %}> לא ידוע</label>
+        </div>
+        {% else %}
+          {{ d.get('gender') or '—' }}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>תאריך לידה</th>
+      <td>{% if is_owner %}<input type="date" name="birth_date" value="{{ d.get('birth_date') or '' }}">{% else %}{{ d.get('birth_date') or '—' }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>גיל</th>
+      <td>{% if is_owner %}<input type="text" name="age" value="{{ d.get('age') or '' }}" placeholder="לדוג׳: 3 שנים">{% else %}{{ d.get('age') or '—' }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>עיקור</th>
+      <td>
+        {% if is_owner %}
+        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:700">
+          <input type="checkbox" name="neutered" value="1" {% if d.get('neutered') %}checked{% endif %}
+                 onchange="document.getElementById('neuter-date-field').style.display=this.checked?'block':'none'">
+          כן
+        </label>
+        <div id="neuter-date-field" style="display:{% if d.get('neutered') %}block{% else %}none{% endif %};margin-top:0.3rem">
+          <input type="date" name="neuter_date" value="{{ d.get('neuter_date') or '' }}">
+        </div>
+        {% else %}
+          {% if d.get('neutered') %}כן{% if d.get('neuter_date') %} ({{ d.get('neuter_date') }}){% endif %}{% else %}לא{% endif %}
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <th>מתי טופל לאחרונה</th>
+      <td>{% if is_owner %}<input type="date" name="last_treated" value="{{ d.get('last_treated') or '' }}">{% else %}{{ d.get('last_treated') or '—' }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>אוכל אהוב</th>
+      <td>{% if is_owner %}<input type="text" name="favorite_food" value="{{ d.get('favorite_food') or '' }}" placeholder="לדוג׳: טונה">{% else %}{{ d.get('favorite_food') or '—' }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>מתי אכל לאחרונה</th>
+      <td>{% if is_owner %}<input type="datetime-local" name="last_fed" value="{{ d.get('last_fed') or '' }}">{% else %}{{ d.get('last_fed') or '—' }}{% endif %}</td>
+    </tr>
+    <tr>
+      <th>נוכחות בבית</th>
+      <td>
+        {% if is_owner %}
+        <select name="presence">
+          <option value="">לא צוין</option>
+          <option value="קבוע בבית" {% if d.get('presence')=='קבוע בבית' %}selected{% endif %}>קבוע בבית</option>
+          <option value="מגיע מדי פעם" {% if d.get('presence')=='מגיע מדי פעם' %}selected{% endif %}>מגיע מדי פעם</option>
+          <option value="חצי-חצי" {% if d.get('presence')=='חצי-חצי' %}selected{% endif %}>חצי-חצי</option>
+        </select>
+        {% else %}
+          {{ d.get('presence') or '—' }}
+        {% endif %}
+      </td>
+    </tr>
+    {% for pair in tag_pairs %}
+    <tr {% if is_owner %}class="tag-row"{% endif %}>
+      <th {% if is_owner %}class="tag-row-key"{% endif %}>{{ pair.k }}</th>
+      <td {% if is_owner %}class="tag-row-td"{% endif %}>
+        {% if is_owner %}
+          <input type="text" class="tag-row-value" value="{{ pair.v or '' }}" placeholder="ערך...">
+          <button type="button" class="tag-delete-btn" onclick="deleteTagRow(this)" title="מחק שורה">✕</button>
+        {% else %}
+          {{ pair.v or '—' }}
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    {% if is_owner %}
+    <tr id="add-tag-row">
+      <th>
+        <input type="text" id="tag-key-input" placeholder="שם הקטגוריה" style="width:100%">
+      </th>
+      <td class="tag-row-td">
+        <input type="text" id="tag-val-input" placeholder="ערך (אופציונלי)" style="flex:1">
+        <button type="button" class="btn btn-secondary" onclick="addTagRow()" style="white-space:nowrap">+ הוסף</button>
+      </td>
+    </tr>
+    {% endif %}
+  </table>
+
+  {% if is_owner %}
+  <input type="hidden" name="tags" id="tags-hidden">
+  <button type="submit" class="btn" style="width:100%;margin-top:1.25rem;font-size:1rem" onclick="updateTagsHidden()">שמור פרטים</button>
+  {% endif %}
+
+{% if is_owner %}
+</form>
+{% else %}
+</div>
+{% endif %}
+
+{% if is_owner %}
+<script>
+function addTagRow() {
+  const keyInput = document.getElementById('tag-key-input');
+  const valInput = document.getElementById('tag-val-input');
+  const key = keyInput.value.trim();
+  if (!key) { keyInput.focus(); return; }
+
+  const addRow = document.getElementById('add-tag-row');
+  const tbody = addRow.parentElement;
+
+  const tr = document.createElement('tr');
+  tr.className = 'tag-row';
+  tr.innerHTML = `<th class="tag-row-key">${escHtml(key)}</th>
+    <td class="tag-row-td">
+      <input type="text" class="tag-row-value" value="${escHtml(valInput.value.trim())}" placeholder="ערך...">
+      <button type="button" class="tag-delete-btn" onclick="deleteTagRow(this)" title="מחק שורה">✕</button>
+    </td>`;
+  tbody.insertBefore(tr, addRow);
+
+  keyInput.value = '';
+  valInput.value = '';
+  keyInput.focus();
+}
+
+document.getElementById('tag-key-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('tag-val-input').focus(); }
+});
+document.getElementById('tag-val-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); addTagRow(); }
+});
+
+function deleteTagRow(btn) {
+  btn.closest('tr').remove();
+}
+
+function updateTagsHidden() {
+  const pairs = Array.from(document.querySelectorAll('.tag-row')).map(tr => ({
+    k: tr.querySelector('.tag-row-key').textContent.trim(),
+    v: tr.querySelector('.tag-row-value').value.trim(),
+  })).filter(p => p.k);
+  document.getElementById('tags-hidden').value = JSON.stringify(pairs);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endif %}
+
+{% endblock %}

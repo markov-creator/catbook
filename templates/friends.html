@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">חברים</h1>
+</div>
+
+{% if found_cat_notice %}
+<div class="found-cat-notice">
+  {% if found_cat_notice.photo %}
+  <img src="{{ url_for('static', filename='uploads/' + found_cat_notice.photo) }}" alt="תמונה שזוהתה" class="found-cat-photo">
+  {% endif %}
+  <div class="found-cat-text">
+    {% if found_cat_notice.context_type == 'similar' %}
+      <strong>החתול שלך דומה לחתול של מישהו אחר! 🐱</strong><br>
+      המשתמש <strong>{{ found_cat_notice.requester }}</strong> הבחין שהחתול שלך דומה לחתול שלו.
+    {% else %}
+      <strong>מצאו את החתול שלך! 🐱</strong><br>
+      המשתמש <strong>{{ found_cat_notice.requester }}</strong> זיהה את החתול שלך בתמונה זו.
+      {% if found_cat_notice.cat_id %}
+      <form method="POST" action="{{ url_for('save_found_photo') }}" style="margin-top:0.6rem">
+        <input type="hidden" name="cat_id" value="{{ found_cat_notice.cat_id }}">
+        <input type="hidden" name="photo_filename" value="{{ found_cat_notice.photo }}">
+        <button type="submit" class="btn btn-secondary" style="font-size:0.9rem;padding:0.35rem 0.9rem">+ הוסף תמונה זו לחתול</button>
+      </form>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Search -->
+<div class="form-card" style="margin-bottom:2rem">
+  <form method="GET" action="{{ url_for('friends') }}">
+    <label>חיפוש משתמש</label>
+    <div style="display:flex;gap:0.75rem;margin-top:0.45rem">
+      <input type="text" name="q" value="{{ q }}" placeholder="הכנס שם משתמש..." style="flex:1">
+      <button type="submit" class="btn">חפש</button>
+    </div>
+  </form>
+
+  {% if search_results %}
+  <div class="friends-list" style="margin-top:1.25rem">
+    {% for u in search_results %}
+    <div class="friend-card">
+      <div class="friend-name">{{ u.username }}</div>
+      <div>
+        {% if u.status == 'friend' %}
+          <span class="friend-badge">חבר</span>
+        {% elif u.status == 'sent' %}
+          <span class="friend-badge friend-badge--gray">ממתין לאישור</span>
+        {% elif u.status == 'received' %}
+          <span class="friend-badge">שלח לך בקשה</span>
+        {% else %}
+          <form method="POST" action="{{ url_for('friend_add', user_id=u.id) }}">
+            <input type="hidden" name="q" value="{{ q }}">
+            <button type="submit" class="btn" style="padding:0.4rem 1rem;font-size:0.9rem">+ הוסף</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% elif q %}
+  <p style="color:var(--gray);margin-top:1rem;font-weight:700">לא נמצאו משתמשים</p>
+  {% endif %}
+</div>
+
+<!-- Pending received requests -->
+{% if received %}
+<div class="friends-section">
+  <h2 class="section-title">בקשות ממתינות <span class="badge">{{ received|length }}</span></h2>
+  <div class="friends-list">
+    {% for req in received %}
+    <div class="friend-card" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="friend-name">{{ req.username }}</div>
+        <div style="display:flex;gap:0.5rem">
+          <form method="POST" action="{{ url_for('friend_accept', fid=req.id) }}">
+            <button type="submit" class="btn" style="padding:0.4rem 1rem;font-size:0.9rem">אשר</button>
+          </form>
+          <form method="POST" action="{{ url_for('friend_reject', fid=req.id) }}">
+            <button type="submit" class="btn btn-danger" style="padding:0.4rem 1rem;font-size:0.9rem">דחה</button>
+          </form>
+        </div>
+      </div>
+      {% if req.context_type or req.context_photo %}
+      <div class="friend-request-context">
+        <div class="friend-request-photos">
+          {% if req.context_photo %}
+            <img src="{{ url_for('static', filename='uploads/' + req.context_photo) }}" class="friend-request-photo" title="התמונה שהועלתה">
+          {% endif %}
+          {% for p in req.cat_photos %}
+            <img src="{{ url_for('static', filename='uploads/' + p) }}" class="friend-request-photo">
+          {% endfor %}
+        </div>
+        <span>
+          {% if req.context_type == 'similar' %}
+            החתול שלך דומה לחתול {% if req.cat_name %}"{{ req.cat_name }}"{% else %}שלו{% endif %}
+          {% else %}
+            זיהה את החתול שלך {% if req.cat_name %}"{{ req.cat_name }}"{% endif %} בתמונה
+          {% endif %}
+        </span>
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Friends list -->
+<div class="friends-section">
+  <h2 class="section-title">החברים שלי ({{ friends|length }})</h2>
+  {% if friends %}
+  <div class="friends-list">
+    {% for friend in friends %}
+    <div class="friend-card">
+      <div class="friend-name">{{ friend.username }}</div>
+      <div style="display:flex;gap:0.5rem;align-items:center">
+        <a href="{{ url_for('chat', friend_id=friend.id) }}" class="btn" style="padding:0.4rem 0.9rem;font-size:0.85rem;position:relative">
+          💬 צ'אט
+          {% if friend.unread > 0 %}<span class="nav-badge">{{ friend.unread }}</span>{% endif %}
+        </a>
+        <form method="POST" action="{{ url_for('friend_remove', fid=friend.fid) }}"
+              onsubmit="return confirm('להסיר את {{ friend.username }} מהחברים?')">
+          <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.9rem;font-size:0.85rem">הסר</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p style="color:var(--gray);font-weight:700">אין לך חברים עדיין — חפש משתמשים כדי להוסיף</p>
+  {% endif %}
+</div>
+
+<!-- Sent pending -->
+{% if sent %}
+<div class="friends-section">
+  <h2 class="section-title">בקשות שנשלחו</h2>
+  <div class="friends-list">
+    {% for req in sent %}
+    <div class="friend-card">
+      <div class="friend-name">{{ req.username }}</div>
+      <div style="display:flex;gap:0.75rem;align-items:center">
+        <span class="friend-badge friend-badge--gray">ממתין לאישור</span>
+        <form method="POST" action="{{ url_for('friend_reject', fid=req.id) }}">
+          <button type="submit" class="btn btn-secondary" style="padding:0.4rem 0.9rem;font-size:0.85rem">בטל</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="identify-container">
+  <h1 class="page-title" style="margin-bottom:1.5rem">זיהוי חתול</h1>
+
+  <div class="identify-card">
+    <p class="identify-desc">העלה תמונה של חתול וה-AI יזהה איזה מהחתולים הרשומים זה — שלך ושל משתמשים אחרים</p>
+
+    <form method="POST" enctype="multipart/form-data" id="identify-form">
+      <div class="form-group">
+        <label>תמונה לזיהוי</label>
+        <div class="file-input-wrapper" onclick="document.getElementById('identify-input').click()">
+          <input type="file" id="identify-input" name="photo" accept="image/*" required>
+          <div class="file-input-label">לחץ לבחירת תמונה</div>
+        </div>
+      </div>
+
+      <div class="identify-preview" id="identify-preview"></div>
+
+      <div class="form-group" style="margin-top:1.2rem">
+        <label>כתובת <span style="font-weight:400;color:var(--gray)">(אופציונלי)</span></label>
+        <input type="text" name="location" placeholder="לדוג׳: רחוב הרצל 1, תל אביב" style="margin-top:0.35rem">
+      </div>
+
+      <div class="form-group" style="margin-top:0.8rem">
+        <label>מיקום מדויק <span style="font-weight:400;color:var(--gray)">(אופציונלי)</span></label>
+        <input type="text" name="location_precise" placeholder="לדוג׳: ליד גן הכלבים, כניסה צפונית" style="margin-top:0.35rem">
+      </div>
+
+      <br>
+      <button type="submit" id="identify-btn" class="btn btn-full">זהה חתול 🔍</button>
+    </form>
+
+    <div class="loading" id="loading-indicator">
+      <div class="progress-steps">
+        <div class="progress-step" id="step-1">
+          <span class="step-icon">📤</span>
+          <span class="step-text">מעלה תמונה...</span>
+          <span class="step-check">✓</span>
+        </div>
+        <div class="progress-step" id="step-2">
+          <span class="step-icon">🔍</span>
+          <span class="step-text">מחלץ תכונות...</span>
+          <span class="step-check">✓</span>
+        </div>
+        <div class="progress-step" id="step-3">
+          <span class="step-icon">🐱</span>
+          <span class="step-text">משווה לחתולים...</span>
+          <span class="step-check">✓</span>
+        </div>
+        <div class="progress-step" id="step-4">
+          <span class="step-icon">✨</span>
+          <span class="step-text">מסיים...</span>
+          <span class="step-check">✓</span>
+        </div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-bar-fill"></div>
+      </div>
+    </div>
+
+    {% if result %}
+    <div class="result-box">
+      {% if result.identified %}
+        <div class="result-label">
+          {{ "חתולים שזוהו" if result.identified|length > 1 else "החתול המזוהה" }}:
+        </div>
+
+        {% for cat in result.identified %}
+        <div class="identified-cat {% if not loop.first %}identified-cat--sep{% endif %}">
+          <div class="result-name">
+            {{ cat.name }}
+            {% if cat.owner %}
+              <span class="result-owner">של {{ cat.owner }}</span>
+            {% else %}
+              <span class="result-owner result-owner--mine">שלי</span>
+            {% endif %}
+          </div>
+          <div class="confidence-bar-wrap">
+            <div class="confidence-bar" style="width: {{ cat.confidence }}%"></div>
+          </div>
+          <div class="confidence-label">ביטחון: {{ cat.confidence }}%</div>
+          {% if result.temp_filename and cat.is_mine %}
+          <form method="POST" action="{{ url_for('identify_save_photo') }}" style="margin-top:0.75rem">
+            <input type="hidden" name="cat_id" value="{{ cat.cat_id }}">
+            <input type="hidden" name="temp_filename" value="{{ result.temp_filename }}">
+            <button type="submit" class="btn btn-secondary" style="width:100%">+ הוסף תמונה זו ל"{{ cat.name }}"</button>
+          </form>
+          {% endif %}
+          {% if not cat.is_mine %}
+            {% if cat.already_friends %}
+              <div class="identify-friend-status">אתם כבר חברים ✓</div>
+            {% else %}
+              <form method="POST" action="{{ url_for('friend_add', user_id=cat.owner_id) }}" style="margin-top:0.75rem">
+                {% if result.temp_filename %}
+                  <input type="hidden" name="context_photo" value="{{ result.temp_filename }}">
+                  <input type="hidden" name="context_cat_id" value="{{ cat.cat_id }}">
+                {% endif %}
+                <button type="submit" class="btn" style="width:100%">שלח בקשת חברות ל-{{ cat.owner }}</button>
+              </form>
+            {% endif %}
+          {% endif %}
+        </div>
+        {% endfor %}
+
+      {% else %}
+        <div class="result-name" style="font-size:1.4rem">לא זוהה חתול מהרשימה</div>
+      {% endif %}
+
+      {% if result.few_photos %}
+      <div class="few-photos-warning">
+        לדיוק גבוה יותר — הוסף לפחות 3 תמונות לכל חתול מזוויות שונות
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

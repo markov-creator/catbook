@@ -1,0 +1,7 @@
+flask
+werkzeug
+Pillow
+python-dotenv
+numpy
+torch
+transformers

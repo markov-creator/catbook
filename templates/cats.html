@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if similar_notice %}
+<div class="similar-alert" id="similar-alert">
+  <button class="similar-alert-close" onclick="document.getElementById('similar-alert').remove()">✕</button>
+  <div class="similar-alert-title">שים לב! התמונה דומה לחתול של משתמש אחר</div>
+  <div class="similar-alert-body">
+    <div class="similar-alert-photos">
+      {% for photo in similar_notice.photos %}
+        <img src="{{ url_for('static', filename='uploads/' + photo) }}" alt="{{ similar_notice.cat_name }}">
+      {% endfor %}
+    </div>
+    <div class="similar-alert-info">
+      <p>החתול <strong>{{ similar_notice.cat_name }}</strong> של המשתמש <strong>{{ similar_notice.owner }}</strong> נראה דומה לתמונה שהעלית.</p>
+      {% if similar_notice.already_friends %}
+        <p class="similar-alert-already">אתם כבר חברים ✓</p>
+      {% else %}
+        <form method="POST" action="{{ url_for('friend_add', user_id=similar_notice.owner_id) }}">
+          <input type="hidden" name="context_type" value="similar">
+          <input type="hidden" name="context_cat_id" value="{{ similar_notice.cat_id }}">
+          <button type="submit" class="btn">שלח בקשת חברות ל-{{ similar_notice.owner }}</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="page-header">
+  <h1 class="page-title">החתולים שלי</h1>
+  <a href="{{ url_for('add_cat') }}" class="btn">+ הוסף חתול</a>
+</div>
+
+{% if cats %}
+<div class="cats-grid">
+  {% for cat in cats %}
+  <div class="cat-card">
+
+    {% if cat.photos %}
+      <div class="cat-photo-grid {% if cat.photos|length == 1 %}single{% endif %}">
+        {% for photo in cat.photos[:4] %}
+          <div class="photo-wrapper">
+            <img src="{{ url_for('static', filename='uploads/' + photo.filename) }}" alt="{{ cat.name }}">
+            <form method="POST" action="{{ url_for('delete_photo', photo_id=photo.id) }}"
+                  class="delete-photo-form"
+                  onsubmit="return confirm('למחוק תמונה זו?')">
+              <button type="submit" class="delete-photo-btn" title="מחק תמונה">✕</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="cat-photo-placeholder">🐱</div>
+    {% endif %}
+
+    <div class="cat-info">
+      <div class="cat-name">{{ cat.name }}</div>
+      <div class="photo-count">{{ cat.photos|length }} תמונות</div>
+      <div class="cat-actions">
+        <button onclick="showAddPhoto({{ cat.id }})" class="btn btn-secondary">+ תמונה</button>
+        <a href="{{ url_for('cat_details_page', cat_id=cat.id) }}" class="btn btn-secondary">📋 פרטים</a>
+        <form method="POST" action="{{ url_for('delete_cat', cat_id=cat.id) }}"
+              style="display:inline"
+              onsubmit="return confirmDelete('{{ cat.name }}')">
+          <button type="submit" class="btn btn-danger">מחק</button>
+        </form>
+      </div>
+    </div>
+
+    <div id="add-photo-{{ cat.id }}" class="add-photo-section" style="display:none">
+      <form id="photo-form-{{ cat.id }}" enctype="multipart/form-data">
+        <input type="file" name="photo" accept="image/*" required style="width:100%;margin-bottom:0.5rem;">
+        <button type="button" onclick="uploadPhoto({{ cat.id }})" class="btn" style="width:100%">העלה תמונה</button>
+      </form>
+    </div>
+
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty-state">
+  <div class="empty-icon">🐱</div>
+  <p>אין לך חתולים רשומים עדיין</p>
+  <a href="{{ url_for('add_cat') }}" class="btn">הוסף את החתול הראשון שלך</a>
+</div>
+{% endif %}
+
+{% if friends_cats %}
+<div style="margin-top:3rem">
+  {% for friend in friends_cats %}
+  <div class="page-header" style="margin-bottom:1rem">
+    <h2 class="page-title" style="font-size:1.5rem">החתולים של {{ friend.username }}</h2>
+  </div>
+  <div class="cats-grid" style="margin-bottom:2rem">
+    {% for cat in friend.cats %}
+    <div class="cat-card">
+      {% if cat.photos %}
+        <div class="cat-photo-grid {% if cat.photos|length == 1 %}single{% endif %}">
+          {% for photo in cat.photos[:4] %}
+            <div class="photo-wrapper">
+              <img src="{{ url_for('static', filename='uploads/' + photo.filename) }}" alt="{{ cat.name }}">
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="cat-photo-placeholder">🐱</div>
+      {% endif %}
+      <div class="cat-info">
+        <div class="cat-name">{{ cat.name }}</div>
+        <div class="photo-count">{{ cat.photos|length }} תמונות</div>
+        <div class="cat-actions">
+          <a href="{{ url_for('cat_details_page', cat_id=cat.id) }}" class="btn btn-secondary">📋 פרטים</a>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+
+{% endblock %}

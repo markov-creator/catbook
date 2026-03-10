@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CatBook</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">🐱 CatBook</div>
+  {% if session.user_id %}
+  <div class="nav-links">
+    <span>שלום, {{ session.username }}</span>
+    <a href="{{ url_for('cats') }}">החתולים שלי</a>
+    <a href="{{ url_for('identify') }}">זיהוי חתול</a>
+    <a href="{{ url_for('friends') }}">
+      חברים{% if pending_requests > 0 %}<span class="nav-badge">{{ pending_requests }}</span>{% endif %}
+    </a>
+    <a href="{{ url_for('notifications') }}">
+      🔔{% if unread_notifs > 0 %}<span class="nav-badge">{{ unread_notifs }}</span>{% endif %}
+    </a>
+    <a href="{{ url_for('friends') }}">
+      💬{% if unread_messages > 0 %}<span class="nav-badge">{{ unread_messages }}</span>{% endif %}
+    </a>
+    <a href="{{ url_for('logout') }}" class="btn-logout">התנתק</a>
+  </div>
+  {% endif %}
+</nav>
+
+<main>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, msg in messages %}
+        <div class="flash {% if category == 'warning' %}flash-warning{% endif %}">{{ msg }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>

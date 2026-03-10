@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">התראות</h1>
+</div>
+
+{% if notifs %}
+<div style="display:flex;flex-direction:column;gap:0.75rem">
+  {% for n in notifs %}
+  <div class="notif-card {% if not n.is_read %}notif-card--unread{% endif %}">
+    <div class="notif-photos">
+      {% if n.photo %}
+        <img src="{{ url_for('static', filename='uploads/' + n.photo) }}" class="notif-photo">
+      {% endif %}
+      {% for p in n.cat_photos %}
+        <img src="{{ url_for('static', filename='uploads/' + p) }}" class="notif-photo">
+      {% endfor %}
+    </div>
+    <div class="notif-body">
+      {% if n.type == 'identified' %}
+        <div class="notif-text">
+          המשתמש <strong>{{ n.from_username }}</strong> זיהה את החתול שלך
+          {% if n.cat_name %}<strong>"{{ n.cat_name }}"</strong>{% endif %}
+          בתמונה{% if n.location or n.location_precise %}<br>
+          {% if n.location %}<span class="notif-location">📍 {{ n.location }}</span>{% endif %}
+          {% if n.location_precise %}<span class="notif-location-precise">🎯 {{ n.location_precise }}</span>{% endif %}
+          {% endif %}
+        </div>
+      {% elif n.type == 'similar' %}
+        <div class="notif-text">
+          המשתמש <strong>{{ n.from_username }}</strong> העלה תמונה שדומה לחתול שלך
+          {% if n.cat_name %}<strong>"{{ n.cat_name }}"</strong>{% endif %}
+        </div>
+      {% endif %}
+      <div class="notif-time">{{ n.created_at }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <div class="empty-icon">🔔</div>
+  <p>אין התראות עדיין</p>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,7 @@
+.env
+catbook.db
+static/uploads/
+__pycache__/
+*.pyc
+.venv/
+venv/
