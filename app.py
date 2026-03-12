@@ -265,6 +265,73 @@ def init_db():
             tags TEXT,
             FOREIGN KEY (cat_id) REFERENCES cats(id)
         )''')
+        try:
+            db.execute('ALTER TABLE friendships ADD COLUMN context_own_cat_id INTEGER')
+        except Exception:
+            pass
+        try:
+            db.execute('ALTER TABLE friendships ADD COLUMN request_message TEXT')
+        except Exception:
+            pass
+        db.execute('''CREATE TABLE IF NOT EXISTS shared_details (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cat_id_1 INTEGER NOT NULL,
+            cat_id_2 INTEGER NOT NULL,
+            gender TEXT,
+            birth_date TEXT,
+            age TEXT,
+            neutered INTEGER DEFAULT 0,
+            neuter_date TEXT,
+            last_treated TEXT,
+            favorite_food TEXT,
+            last_fed TEXT,
+            presence TEXT,
+            tags TEXT,
+            FOREIGN KEY (cat_id_1) REFERENCES cats(id),
+            FOREIGN KEY (cat_id_2) REFERENCES cats(id),
+            UNIQUE(cat_id_1, cat_id_2)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS details_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cat_id INTEGER,
+            shared_details_id INTEGER,
+            saved_by INTEGER NOT NULL,
+            saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            data TEXT NOT NULL,
+            FOREIGN KEY (saved_by) REFERENCES users(id)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            cat_id INTEGER,
+            photo TEXT,
+            caption TEXT,
+            visibility TEXT NOT NULL DEFAULT 'friends',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (cat_id) REFERENCES cats(id)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS post_comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (post_id) REFERENCES posts(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )''')
+        try:
+            db.execute("ALTER TABLE posts ADD COLUMN purpose TEXT NOT NULL DEFAULT 'share'")
+        except Exception:
+            pass
+        db.execute('''CREATE TABLE IF NOT EXISTS post_saves (
+            user_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL,
+            saved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, post_id),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (post_id) REFERENCES posts(id)
+        )''')
         db.commit()
 
 
@@ -448,9 +515,15 @@ def add_cat():
         if all_feats:
             similar = find_similar_cat(db, all_feats, session['user_id'])
             if similar:
+                similar['my_cat_id'] = cat_id
                 session['similar_notice'] = similar
                 push_notification(db, similar['owner_id'], 'similar',
                                   from_user_id=session['user_id'], cat_id=similar['cat_id'])
+                if similar['already_friends']:
+                    c1 = min(cat_id, similar['cat_id'])
+                    c2 = max(cat_id, similar['cat_id'])
+                    db.execute('INSERT OR IGNORE INTO shared_details (cat_id_1, cat_id_2) VALUES (?,?)', (c1, c2))
+                    db.commit()
 
         flash(f'החתול "{name}" נוסף בהצלחה!')
         return redirect(url_for('cats'))
@@ -485,9 +558,15 @@ def add_photo(cat_id):
         if feat:
             similar = find_similar_cat(db, [feat], session['user_id'])
             if similar:
+                similar['my_cat_id'] = cat_id
                 session['similar_notice'] = similar
                 push_notification(db, similar['owner_id'], 'similar',
                                   from_user_id=session['user_id'], cat_id=similar['cat_id'])
+                if similar['already_friends']:
+                    c1 = min(cat_id, similar['cat_id'])
+                    c2 = max(cat_id, similar['cat_id'])
+                    db.execute('INSERT OR IGNORE INTO shared_details (cat_id_1, cat_id_2) VALUES (?,?)', (c1, c2))
+                    db.commit()
 
         return jsonify({'success': True, 'filename': filename})
     return jsonify({'error': 'קובץ לא תקין'}), 400
@@ -505,7 +584,6 @@ def cat_details_page(cat_id):
 
     is_owner = cat['user_id'] == uid
     if not is_owner:
-        # Allow only friends to view
         friendship = db.execute('''
             SELECT id FROM friendships
             WHERE ((requester_id=? AND receiver_id=?) OR (requester_id=? AND receiver_id=?))
@@ -515,49 +593,154 @@ def cat_details_page(cat_id):
             flash('אין גישה')
             return redirect(url_for('cats'))
 
-    if request.method == 'POST' and not is_owner:
-        flash('אין הרשאה לערוך')
-        return redirect(url_for('cat_details_page', cat_id=cat_id))
+    # Check for shared details between this cat and another
+    shared_row = db.execute(
+        'SELECT * FROM shared_details WHERE cat_id_1=? OR cat_id_2=?', (cat_id, cat_id)
+    ).fetchone()
 
-    if request.method == 'POST':
-        gender = request.form.get('gender', '').strip() or None
-        birth_date = request.form.get('birth_date', '').strip() or None
-        age = request.form.get('age', '').strip() or None
-        neutered = 1 if request.form.get('neutered') else 0
-        neuter_date = request.form.get('neuter_date', '').strip() or None
-        last_treated = request.form.get('last_treated', '').strip() or None
-        favorite_food = request.form.get('favorite_food', '').strip() or None
-        last_fed = request.form.get('last_fed', '').strip() or None
-        presence = request.form.get('presence', '').strip() or None
-        tags = request.form.get('tags', '').strip() or None
+    if shared_row:
+        other_cat_id = shared_row['cat_id_2'] if shared_row['cat_id_1'] == cat_id else shared_row['cat_id_1']
+        other_cat = db.execute(
+            'SELECT c.id, c.name, c.user_id, u.username FROM cats c JOIN users u ON u.id=c.user_id WHERE c.id=?',
+            (other_cat_id,)
+        ).fetchone()
+        # Can edit if owner of either cat
+        can_edit = is_owner or (other_cat and other_cat['user_id'] == uid)
+        shared_with = {'cat_name': other_cat['name'], 'username': other_cat['username']} if other_cat else None
 
-        db.execute('''
-            INSERT INTO cat_details
-                (cat_id, gender, birth_date, age, neutered, neuter_date, last_treated, favorite_food, last_fed, presence, tags)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(cat_id) DO UPDATE SET
-                gender=excluded.gender, birth_date=excluded.birth_date, age=excluded.age,
-                neutered=excluded.neutered, neuter_date=excluded.neuter_date,
-                last_treated=excluded.last_treated, favorite_food=excluded.favorite_food,
-                last_fed=excluded.last_fed, presence=excluded.presence, tags=excluded.tags
-        ''', (cat_id, gender, birth_date, age, neutered, neuter_date,
-              last_treated, favorite_food, last_fed, presence, tags))
-        db.commit()
-        flash('הפרטים נשמרו בהצלחה ✓')
-        return redirect(url_for('cat_details_page', cat_id=cat_id))
+        if request.method == 'POST' and not can_edit:
+            flash('אין הרשאה לערוך')
+            return redirect(url_for('cat_details_page', cat_id=cat_id))
 
-    row = db.execute('SELECT * FROM cat_details WHERE cat_id=?', (cat_id,)).fetchone()
-    d = dict(row) if row else {}
-    # Parse tags as list of {k, v} dicts
+        if request.method == 'POST':
+            gender = request.form.get('gender', '').strip() or None
+            birth_date = request.form.get('birth_date', '').strip() or None
+            age = request.form.get('age', '').strip() or None
+            neutered = 1 if request.form.get('neutered') else 0
+            neuter_date = request.form.get('neuter_date', '').strip() or None
+            last_treated = request.form.get('last_treated', '').strip() or None
+            favorite_food = request.form.get('favorite_food', '').strip() or None
+            last_fed = request.form.get('last_fed', '').strip() or None
+            presence = request.form.get('presence', '').strip() or None
+            tags = request.form.get('tags', '').strip() or None
+            db.execute('''
+                UPDATE shared_details SET
+                    gender=?, birth_date=?, age=?, neutered=?, neuter_date=?,
+                    last_treated=?, favorite_food=?, last_fed=?, presence=?, tags=?
+                WHERE id=?
+            ''', (gender, birth_date, age, neutered, neuter_date,
+                  last_treated, favorite_food, last_fed, presence, tags, shared_row['id']))
+            db.commit()
+            data_json = json.dumps({'gender': gender, 'birth_date': birth_date, 'age': age,
+                'neutered': neutered, 'neuter_date': neuter_date, 'last_treated': last_treated,
+                'favorite_food': favorite_food, 'last_fed': last_fed, 'presence': presence, 'tags': tags})
+            db.execute('INSERT INTO details_history (shared_details_id, saved_by, data) VALUES (?,?,?)',
+                       (shared_row['id'], uid, data_json))
+            db.commit()
+            flash('הפרטים נשמרו בהצלחה ✓')
+            return redirect(url_for('cat_details_page', cat_id=cat_id))
+
+        d = dict(shared_row)
+    else:
+        # Personal details
+        shared_with = None
+        can_edit = is_owner
+
+        if request.method == 'POST' and not can_edit:
+            flash('אין הרשאה לערוך')
+            return redirect(url_for('cat_details_page', cat_id=cat_id))
+
+        if request.method == 'POST':
+            gender = request.form.get('gender', '').strip() or None
+            birth_date = request.form.get('birth_date', '').strip() or None
+            age = request.form.get('age', '').strip() or None
+            neutered = 1 if request.form.get('neutered') else 0
+            neuter_date = request.form.get('neuter_date', '').strip() or None
+            last_treated = request.form.get('last_treated', '').strip() or None
+            favorite_food = request.form.get('favorite_food', '').strip() or None
+            last_fed = request.form.get('last_fed', '').strip() or None
+            presence = request.form.get('presence', '').strip() or None
+            tags = request.form.get('tags', '').strip() or None
+            db.execute('''
+                INSERT INTO cat_details
+                    (cat_id, gender, birth_date, age, neutered, neuter_date, last_treated, favorite_food, last_fed, presence, tags)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(cat_id) DO UPDATE SET
+                    gender=excluded.gender, birth_date=excluded.birth_date, age=excluded.age,
+                    neutered=excluded.neutered, neuter_date=excluded.neuter_date,
+                    last_treated=excluded.last_treated, favorite_food=excluded.favorite_food,
+                    last_fed=excluded.last_fed, presence=excluded.presence, tags=excluded.tags
+            ''', (cat_id, gender, birth_date, age, neutered, neuter_date,
+                  last_treated, favorite_food, last_fed, presence, tags))
+            db.commit()
+            data_json = json.dumps({'gender': gender, 'birth_date': birth_date, 'age': age,
+                'neutered': neutered, 'neuter_date': neuter_date, 'last_treated': last_treated,
+                'favorite_food': favorite_food, 'last_fed': last_fed, 'presence': presence, 'tags': tags})
+            db.execute('INSERT INTO details_history (cat_id, saved_by, data) VALUES (?,?,?)',
+                       (cat_id, uid, data_json))
+            db.commit()
+            flash('הפרטים נשמרו בהצלחה ✓')
+            return redirect(url_for('cat_details_page', cat_id=cat_id))
+
+        row = db.execute('SELECT * FROM cat_details WHERE cat_id=?', (cat_id,)).fetchone()
+        d = dict(row) if row else {}
+
     tag_pairs = []
     raw_tags = d.get('tags') or ''
     if raw_tags:
         try:
             tag_pairs = json.loads(raw_tags)
         except (ValueError, TypeError):
-            # Legacy: comma-separated plain tags
             tag_pairs = [{'k': t.strip(), 'v': ''} for t in raw_tags.split(',') if t.strip()]
-    return render_template('cat_details.html', cat=cat, d=d, tag_pairs=tag_pairs, is_owner=is_owner)
+    # Load history
+    if shared_row:
+        history_rows = db.execute('''
+            SELECT h.id, h.saved_at, u.username FROM details_history h
+            JOIN users u ON u.id=h.saved_by
+            WHERE h.shared_details_id=? ORDER BY h.saved_at DESC LIMIT 20
+        ''', (shared_row['id'],)).fetchall()
+    else:
+        history_rows = db.execute('''
+            SELECT h.id, h.saved_at, u.username FROM details_history h
+            JOIN users u ON u.id=h.saved_by
+            WHERE h.cat_id=? ORDER BY h.saved_at DESC LIMIT 20
+        ''', (cat_id,)).fetchall()
+    history = [{'id': h['id'],
+                'saved_at': h['saved_at'][:16].replace('T', ' '),
+                'username': h['username']} for h in history_rows]
+    return render_template('cat_details.html', cat=cat, d=d, tag_pairs=tag_pairs,
+                           is_owner=can_edit, shared_with=shared_with, history=history)
+
+
+@app.route('/cats/<int:cat_id>/details/history/<int:history_id>')
+@login_required
+def details_history_load(cat_id, history_id):
+    db = get_db()
+    uid = session['user_id']
+    cat = db.execute('SELECT id, name, user_id FROM cats WHERE id=?', (cat_id,)).fetchone()
+    if not cat:
+        return jsonify({'error': 'not found'}), 404
+    is_owner = cat['user_id'] == uid
+    if not is_owner:
+        friendship = db.execute('''
+            SELECT id FROM friendships
+            WHERE ((requester_id=? AND receiver_id=?) OR (requester_id=? AND receiver_id=?))
+              AND status='accepted'
+        ''', (uid, cat['user_id'], cat['user_id'], uid)).fetchone()
+        if not friendship:
+            return jsonify({'error': 'no access'}), 403
+    shared_row = db.execute(
+        'SELECT * FROM shared_details WHERE cat_id_1=? OR cat_id_2=?', (cat_id, cat_id)
+    ).fetchone()
+    if shared_row:
+        h = db.execute('SELECT * FROM details_history WHERE id=? AND shared_details_id=?',
+                       (history_id, shared_row['id'])).fetchone()
+    else:
+        h = db.execute('SELECT * FROM details_history WHERE id=? AND cat_id=?',
+                       (history_id, cat_id)).fetchone()
+    if not h:
+        return jsonify({'error': 'not found'}), 404
+    return jsonify({'success': True, 'data': json.loads(h['data'])})
 
 
 @app.route('/photos/<int:photo_id>/delete', methods=['POST'])
@@ -593,6 +776,15 @@ def delete_cat(cat_id):
             if os.path.exists(path):
                 os.remove(path)
         db.execute('DELETE FROM cat_photos WHERE cat_id = ?', (cat_id,))
+        db.execute('DELETE FROM cat_details WHERE cat_id = ?', (cat_id,))
+        # Clean up shared details and their history
+        shared = db.execute(
+            'SELECT id FROM shared_details WHERE cat_id_1=? OR cat_id_2=?', (cat_id, cat_id)
+        ).fetchone()
+        if shared:
+            db.execute('DELETE FROM details_history WHERE shared_details_id=?', (shared['id'],))
+            db.execute('DELETE FROM shared_details WHERE id=?', (shared['id'],))
+        db.execute('DELETE FROM details_history WHERE cat_id=?', (cat_id,))
         db.execute('DELETE FROM cats WHERE id = ?', (cat_id,))
         db.commit()
         flash('החתול נמחק')
@@ -783,7 +975,7 @@ def friends():
         friends_list.append({'id': fr['id'], 'username': fr['username'], 'fid': fr['fid'], 'unread': unread})
 
     received_rows = db.execute('''
-        SELECT f.id, u.username, f.context_photo, f.context_type, f.context_cat_id FROM friendships f
+        SELECT f.id, u.username, f.context_photo, f.context_type, f.context_cat_id, f.request_message FROM friendships f
         JOIN users u ON f.requester_id=u.id
         WHERE f.receiver_id=? AND f.status='pending'
     ''', (uid,)).fetchall()
@@ -805,6 +997,7 @@ def friends():
             'context_type': r['context_type'],
             'cat_photos': cat_photos,
             'cat_name': cat_name,
+            'request_message': r['request_message'],
         })
 
     sent = db.execute('''
@@ -857,11 +1050,13 @@ def friend_add(user_id):
     if context_photo and not context_photo.startswith(f'temp_{uid}_'):
         context_photo = ''
     context_cat_id = request.form.get('context_cat_id', type=int)
+    context_own_cat_id = request.form.get('context_own_cat_id', type=int)
     context_type = request.form.get('context_type', '').strip() or None
+    request_message = request.form.get('request_message', '').strip()[:300] or None
     try:
         db.execute(
-            'INSERT INTO friendships (requester_id, receiver_id, context_photo, context_cat_id, context_type) VALUES (?, ?, ?, ?, ?)',
-            (uid, user_id, context_photo or None, context_cat_id, context_type)
+            'INSERT INTO friendships (requester_id, receiver_id, context_photo, context_cat_id, context_own_cat_id, context_type, request_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (uid, user_id, context_photo or None, context_cat_id, context_own_cat_id, context_type, request_message)
         )
         db.commit()
         u = db.execute('SELECT username FROM users WHERE id=?', (user_id,)).fetchone()
@@ -883,6 +1078,15 @@ def friend_accept(fid):
         db.execute("UPDATE friendships SET status='accepted' WHERE id=?", (fid,))
         db.commit()
         flash('בקשת החברות אושרה!')
+        if f['context_type'] == 'similar' and f['context_cat_id'] and f['context_own_cat_id']:
+            # Create shared details table (empty) for the two similar cats
+            c1 = min(f['context_own_cat_id'], f['context_cat_id'])
+            c2 = max(f['context_own_cat_id'], f['context_cat_id'])
+            try:
+                db.execute('INSERT OR IGNORE INTO shared_details (cat_id_1, cat_id_2) VALUES (?, ?)', (c1, c2))
+                db.commit()
+            except Exception:
+                pass
         if f['context_photo'] or f['context_type'] == 'similar':
             requester = db.execute('SELECT username FROM users WHERE id=?', (f['requester_id'],)).fetchone()
             session['found_cat_notice'] = {
@@ -964,15 +1168,33 @@ def friend_remove(fid):
 def notifications():
     db = get_db()
     uid = session['user_id']
-    notifs_rows = db.execute('''
+
+    filter_cat_id = request.args.get('cat_id', type=int)
+    filter_from = request.args.get('from_date', '').strip()
+    filter_to = request.args.get('to_date', '').strip()
+
+    query = '''
         SELECT n.id, n.type, n.photo, n.cat_id, n.is_read, n.created_at, n.location, n.location_precise,
                u.username as from_username, c.name as cat_name
         FROM notifications n
         LEFT JOIN users u ON u.id = n.from_user_id
         LEFT JOIN cats c ON c.id = n.cat_id
         WHERE n.user_id = ?
-        ORDER BY n.created_at DESC
-    ''', (uid,)).fetchall()
+    '''
+    params = [uid]
+    if filter_cat_id:
+        query += ' AND n.cat_id = ?'
+        params.append(filter_cat_id)
+    if filter_from:
+        query += ' AND date(n.created_at) >= ?'
+        params.append(filter_from)
+    if filter_to:
+        query += ' AND date(n.created_at) <= ?'
+        params.append(filter_to)
+    query += ' ORDER BY n.created_at DESC'
+
+    notifs_rows = db.execute(query, params).fetchall()
+
     # Build list with cat photos
     notifs = []
     for n in notifs_rows:
@@ -996,7 +1218,10 @@ def notifications():
     # Mark all as read
     db.execute('UPDATE notifications SET is_read=1 WHERE user_id=?', (uid,))
     db.commit()
-    return render_template('notifications.html', notifs=notifs)
+
+    my_cats = db.execute('SELECT id, name FROM cats WHERE user_id=? ORDER BY name', (uid,)).fetchall()
+    return render_template('notifications.html', notifs=notifs, my_cats=my_cats,
+                           filter_cat_id=filter_cat_id, filter_from=filter_from, filter_to=filter_to)
 
 
 @app.route('/chat/<int:friend_id>', methods=['GET', 'POST'])
@@ -1057,6 +1282,159 @@ def chat(friend_id):
     ''', (uid, friend_id, friend_id, uid)).fetchall()
 
     return render_template('chat.html', friend=friend, messages=messages, uid=uid)
+
+
+# ---------- Posts ----------
+
+@app.route('/posts')
+@login_required
+def posts():
+    db = get_db()
+    uid = session['user_id']
+    friend_ids = {r['id'] for r in db.execute('''
+        SELECT u.id FROM friendships f
+        JOIN users u ON (CASE WHEN f.requester_id=? THEN f.receiver_id ELSE f.requester_id END)=u.id
+        WHERE (f.requester_id=? OR f.receiver_id=?) AND f.status='accepted'
+    ''', (uid, uid, uid)).fetchall()}
+    visible_user_ids = friend_ids | {uid}
+
+    filter_purpose = request.args.get('purpose', '').strip()
+    show_saved = request.args.get('saved') == '1'
+
+    saved_ids = {r['post_id'] for r in db.execute(
+        'SELECT post_id FROM post_saves WHERE user_id=?', (uid,)
+    ).fetchall()}
+
+    base_query = '''
+        SELECT p.id, p.user_id, p.cat_id, p.photo, p.caption, p.visibility, p.purpose, p.created_at,
+               u.username, c.name as cat_name
+        FROM posts p
+        JOIN users u ON u.id=p.user_id
+        LEFT JOIN cats c ON c.id=p.cat_id
+        WHERE (p.visibility='everyone' OR p.user_id IN ({}))
+    '''.format(','.join('?' * len(visible_user_ids)))
+    params = list(visible_user_ids)
+    if filter_purpose in ('share', 'adoption'):
+        base_query += ' AND p.purpose = ?'
+        params.append(filter_purpose)
+    if show_saved:
+        if saved_ids:
+            base_query += ' AND p.id IN ({})'.format(','.join('?' * len(saved_ids)))
+            params.extend(list(saved_ids))
+        else:
+            base_query += ' AND 0'  # no saved posts
+    base_query += ' ORDER BY p.created_at DESC'
+    all_posts = db.execute(base_query, params).fetchall()
+
+    posts_data = []
+    for p in all_posts:
+        comments = db.execute('''
+            SELECT pc.id, pc.content, pc.created_at, pc.user_id, u.username
+            FROM post_comments pc JOIN users u ON u.id=pc.user_id
+            WHERE pc.post_id=? ORDER BY pc.created_at ASC
+        ''', (p['id'],)).fetchall()
+        posts_data.append({
+            'id': p['id'], 'user_id': p['user_id'], 'cat_id': p['cat_id'],
+            'photo': p['photo'], 'caption': p['caption'], 'visibility': p['visibility'],
+            'purpose': p['purpose'],
+            'created_at': p['created_at'][:16].replace('T', ' '),
+            'username': p['username'], 'cat_name': p['cat_name'],
+            'comments': [{'id': c['id'], 'content': c['content'], 'username': c['username'],
+                          'user_id': c['user_id'],
+                          'created_at': c['created_at'][:16].replace('T', ' ')} for c in comments],
+        })
+    my_cats = db.execute('SELECT id, name FROM cats WHERE user_id=? ORDER BY name', (uid,)).fetchall()
+    return render_template('posts.html', posts=posts_data, my_cats=my_cats, uid=uid,
+                           filter_purpose=filter_purpose, saved_ids=saved_ids, show_saved=show_saved)
+
+
+@app.route('/posts/create', methods=['POST'])
+@login_required
+def post_create():
+    db = get_db()
+    uid = session['user_id']
+    cat_id = request.form.get('cat_id', type=int) or None
+    caption = request.form.get('caption', '').strip() or None
+    visibility = request.form.get('visibility', 'friends')
+    if visibility not in ('friends', 'everyone'):
+        visibility = 'friends'
+    purpose = request.form.get('purpose', 'share')
+    if purpose not in ('share', 'adoption'):
+        purpose = 'share'
+    file = request.files.get('photo')
+    photo = None
+    if file and file.filename:
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext in ALLOWED_EXTENSIONS:
+            photo = f'post_{uid}_{os.urandom(8).hex()}{ext}'
+            img = Image.open(file).convert('RGB')
+            img.thumbnail((1200, 1200), Image.LANCZOS)
+            img.save(os.path.join(app.config['UPLOAD_FOLDER'], photo))
+    if not photo and not caption:
+        flash('נא להוסיף תמונה או כיתוב')
+        return redirect(url_for('posts'))
+    db.execute('INSERT INTO posts (user_id, cat_id, photo, caption, visibility, purpose) VALUES (?,?,?,?,?,?)',
+               (uid, cat_id, photo, caption, visibility, purpose))
+    db.commit()
+    return redirect(url_for('posts'))
+
+
+@app.route('/posts/<int:post_id>/delete', methods=['POST'])
+@login_required
+def post_delete(post_id):
+    db = get_db()
+    uid = session['user_id']
+    post = db.execute('SELECT id, photo, user_id FROM posts WHERE id=?', (post_id,)).fetchone()
+    if post and post['user_id'] == uid:
+        if post['photo']:
+            path = os.path.join(app.config['UPLOAD_FOLDER'], post['photo'])
+            if os.path.exists(path):
+                os.remove(path)
+        db.execute('DELETE FROM post_comments WHERE post_id=?', (post_id,))
+        db.execute('DELETE FROM posts WHERE id=?', (post_id,))
+        db.commit()
+    return redirect(url_for('posts'))
+
+
+@app.route('/posts/<int:post_id>/comment', methods=['POST'])
+@login_required
+def post_comment(post_id):
+    db = get_db()
+    uid = session['user_id']
+    content = request.form.get('content', '').strip()
+    if content:
+        db.execute('INSERT INTO post_comments (post_id, user_id, content) VALUES (?,?,?)',
+                   (post_id, uid, content))
+        db.commit()
+    return redirect(url_for('posts') + f'#post-{post_id}')
+
+
+@app.route('/posts/<int:post_id>/comments/<int:comment_id>/delete', methods=['POST'])
+@login_required
+def post_comment_delete(post_id, comment_id):
+    db = get_db()
+    uid = session['user_id']
+    comment = db.execute('SELECT id, user_id FROM post_comments WHERE id=? AND post_id=?',
+                         (comment_id, post_id)).fetchone()
+    post = db.execute('SELECT user_id FROM posts WHERE id=?', (post_id,)).fetchone()
+    if comment and (comment['user_id'] == uid or (post and post['user_id'] == uid)):
+        db.execute('DELETE FROM post_comments WHERE id=?', (comment_id,))
+        db.commit()
+    return redirect(url_for('posts') + f'#post-{post_id}')
+
+
+@app.route('/posts/<int:post_id>/save', methods=['POST'])
+@login_required
+def post_save(post_id):
+    db = get_db()
+    uid = session['user_id']
+    existing = db.execute('SELECT 1 FROM post_saves WHERE user_id=? AND post_id=?', (uid, post_id)).fetchone()
+    if existing:
+        db.execute('DELETE FROM post_saves WHERE user_id=? AND post_id=?', (uid, post_id))
+    else:
+        db.execute('INSERT OR IGNORE INTO post_saves (user_id, post_id) VALUES (?,?)', (uid, post_id))
+    db.commit()
+    return redirect(request.referrer or url_for('posts') + f'#post-{post_id}')
 
 
 if __name__ == '__main__':

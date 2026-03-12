@@ -52,8 +52,9 @@
         {% elif u.status == 'received' %}
           <span class="friend-badge">שלח לך בקשה</span>
         {% else %}
-          <form method="POST" action="{{ url_for('friend_add', user_id=u.id) }}">
+          <form method="POST" action="{{ url_for('friend_add', user_id=u.id) }}" style="display:flex;flex-direction:column;gap:0.4rem;align-items:flex-end">
             <input type="hidden" name="q" value="{{ q }}">
+            <input type="text" name="request_message" placeholder="סיבה לבקשה (אופציונלי)..." maxlength="300" style="width:220px;font-size:0.85rem;padding:0.3rem 0.6rem;border:1.5px solid var(--purple-light);border-radius:8px;">
             <button type="submit" class="btn" style="padding:0.4rem 1rem;font-size:0.9rem">+ הוסף</button>
           </form>
         {% endif %}
@@ -73,6 +74,9 @@
   <div class="friends-list">
     {% for req in received %}
     <div class="friend-card" style="flex-direction:column;align-items:stretch;gap:0.5rem">
+      {% if req.request_message %}
+      <div class="friend-request-message">"{{ req.request_message }}"</div>
+      {% endif %}
       <div style="display:flex;justify-content:space-between;align-items:center">
         <div class="friend-name">{{ req.username }}</div>
         <div style="display:flex;gap:0.5rem">

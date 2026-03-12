@@ -19,6 +19,7 @@
         <form method="POST" action="{{ url_for('friend_add', user_id=similar_notice.owner_id) }}">
           <input type="hidden" name="context_type" value="similar">
           <input type="hidden" name="context_cat_id" value="{{ similar_notice.cat_id }}">
+          <input type="hidden" name="context_own_cat_id" value="{{ similar_notice.my_cat_id }}">
           <button type="submit" class="btn">שלח בקשת חברות ל-{{ similar_notice.owner }}</button>
         </form>
       {% endif %}

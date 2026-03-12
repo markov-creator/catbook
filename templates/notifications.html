@@ -5,6 +5,23 @@
   <h1 class="page-title">התראות</h1>
 </div>
 
+<form method="GET" action="{{ url_for('notifications') }}" class="notif-filters">
+  <select name="cat_id" onchange="this.form.submit()">
+    <option value="">כל החתולים</option>
+    {% for cat in my_cats %}
+      <option value="{{ cat.id }}" {% if filter_cat_id == cat.id %}selected{% endif %}>{{ cat.name }}</option>
+    {% endfor %}
+  </select>
+  <input type="date" name="from_date" value="{{ filter_from }}" placeholder="מ-" onchange="this.form.submit()">
+  <input type="date" name="to_date" value="{{ filter_to }}" placeholder="עד" onchange="this.form.submit()">
+  <button type="button" class="btn btn-secondary" onclick="setRange(0)">היום</button>
+  <button type="button" class="btn btn-secondary" onclick="setRange(7)">שבוע</button>
+  <button type="button" class="btn btn-secondary" onclick="setRange(30)">חודש</button>
+  {% if filter_cat_id or filter_from or filter_to %}
+  <a href="{{ url_for('notifications') }}" class="btn btn-secondary">✕ נקה</a>
+  {% endif %}
+</form>
+
 {% if notifs %}
 <div style="display:flex;flex-direction:column;gap:0.75rem">
   {% for n in notifs %}
@@ -41,8 +58,21 @@
 {% else %}
 <div class="empty-state">
   <div class="empty-icon">🔔</div>
-  <p>אין התראות עדיין</p>
+  <p>{% if filter_cat_id or filter_from or filter_to %}אין התראות התואמות לסינון{% else %}אין התראות עדיין{% endif %}</p>
 </div>
 {% endif %}
+
+<script>
+function setRange(days) {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - days);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const form = document.querySelector('.notif-filters');
+  form.querySelector('[name="from_date"]').value = fmt(from);
+  form.querySelector('[name="to_date"]').value = fmt(to);
+  form.submit();
+}
+</script>
 
 {% endblock %}

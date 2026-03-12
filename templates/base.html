@@ -18,6 +18,7 @@
     <span>שלום, {{ session.username }}</span>
     <a href="{{ url_for('cats') }}">החתולים שלי</a>
     <a href="{{ url_for('identify') }}">זיהוי חתול</a>
+    <a href="{{ url_for('posts') }}">פוסטים</a>
     <a href="{{ url_for('friends') }}">
       חברים{% if pending_requests > 0 %}<span class="nav-badge">{{ pending_requests }}</span>{% endif %}
     </a>

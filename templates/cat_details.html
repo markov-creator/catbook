@@ -6,6 +6,12 @@
   <a href="{{ url_for('cats') }}" class="btn btn-secondary">← חזרה</a>
 </div>
 
+{% if shared_with %}
+<div class="shared-details-banner">
+  🔗 טבלה משותפת עם <strong>{{ shared_with.cat_name }}</strong> של <strong>{{ shared_with.username }}</strong> — שניכם יכולים לערוך
+</div>
+{% endif %}
+
 {% if is_owner %}
 <form method="POST" action="{{ url_for('cat_details_page', cat_id=cat.id) }}" class="cat-details-page-form">
 {% else %}
@@ -108,6 +114,18 @@
   {% if is_owner %}
   <input type="hidden" name="tags" id="tags-hidden">
   <button type="submit" class="btn" style="width:100%;margin-top:1.25rem;font-size:1rem" onclick="updateTagsHidden()">שמור פרטים</button>
+  {% if history %}
+  <div class="details-history">
+    <div class="details-history-title">היסטוריה</div>
+    {% for entry in history %}
+    <button type="button" class="details-history-entry" onclick="loadHistory({{ entry.id }})">
+      <span class="details-history-time">{{ entry.saved_at }}</span>
+      <span class="details-history-user">{{ entry.username }}</span>
+      <span class="details-history-restore">שחזר</span>
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
   {% endif %}
 
 {% if is_owner %}
@@ -162,6 +180,56 @@ function updateTagsHidden() {
 
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadHistory(historyId) {
+  const res = await fetch('{{ url_for("cat_details_page", cat_id=cat.id) }}/history/' + historyId);
+  const json = await res.json();
+  if (!json.success) return;
+  const d = json.data;
+
+  // Gender
+  document.querySelectorAll('input[name="gender"]').forEach(r => {
+    r.checked = (r.value === (d.gender || ''));
+  });
+  // Date / text fields
+  const setVal = (name, val) => {
+    const el = document.querySelector('[name="' + name + '"]');
+    if (el) el.value = val || '';
+  };
+  setVal('birth_date', d.birth_date);
+  setVal('age', d.age);
+  setVal('neuter_date', d.neuter_date);
+  setVal('last_treated', d.last_treated);
+  setVal('favorite_food', d.favorite_food);
+  setVal('last_fed', d.last_fed);
+  setVal('presence', d.presence);
+
+  // Neutered checkbox
+  const neuteredCb = document.querySelector('input[name="neutered"]');
+  if (neuteredCb) {
+    neuteredCb.checked = !!d.neutered;
+    document.getElementById('neuter-date-field').style.display = d.neutered ? 'block' : 'none';
+  }
+
+  // Tags — rebuild rows
+  document.querySelectorAll('.tag-row').forEach(tr => tr.remove());
+  const addRow = document.getElementById('add-tag-row');
+  const tbody = addRow.parentElement;
+  const pairs = d.tags ? (() => { try { return JSON.parse(d.tags); } catch(e) { return []; } })() : [];
+  pairs.forEach(p => {
+    const tr = document.createElement('tr');
+    tr.className = 'tag-row';
+    tr.innerHTML = `<th class="tag-row-key">${escHtml(p.k || '')}</th>
+      <td class="tag-row-td">
+        <input type="text" class="tag-row-value" value="${escHtml(p.v || '')}" placeholder="ערך...">
+        <button type="button" class="tag-delete-btn" onclick="deleteTagRow(this)" title="מחק שורה">✕</button>
+      </td>`;
+    tbody.insertBefore(tr, addRow);
+  });
+  updateTagsHidden();
+
+  window.scrollTo({top: 0, behavior: 'smooth'});
 }
 </script>
 {% endif %}

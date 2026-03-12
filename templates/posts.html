@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">פוסטים</h1>
+</div>
+
+<div class="post-create-card">
+  <form method="POST" action="{{ url_for('post_create') }}" enctype="multipart/form-data">
+    <div class="post-create-row">
+      <select name="cat_id">
+        <option value="">ללא חתול ספציפי</option>
+        {% for cat in my_cats %}
+          <option value="{{ cat.id }}">{{ cat.name }}</option>
+        {% endfor %}
+      </select>
+      <select name="purpose">
+        <option value="share">פרסום החתול שלי</option>
+        <option value="adoption">חתול לאימוץ</option>
+      </select>
+      <select name="visibility">
+        <option value="friends">חברים בלבד</option>
+        <option value="everyone">כולם</option>
+      </select>
+    </div>
+    <input type="file" name="photo" accept="image/*" style="width:100%;margin:0.5rem 0">
+    <textarea name="caption" placeholder="כיתוב (אופציונלי)..." rows="2" style="width:100%;resize:vertical;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.5rem;font-family:inherit;font-size:1rem;"></textarea>
+    <button type="submit" class="btn" style="width:100%;margin-top:0.5rem">פרסם</button>
+  </form>
+</div>
+
+<div class="post-filters">
+  <a href="{{ url_for('posts') }}" class="post-filter-btn {% if not filter_purpose and not show_saved %}post-filter-btn--active{% endif %}">הכל</a>
+  <a href="{{ url_for('posts', purpose='share') }}" class="post-filter-btn {% if filter_purpose == 'share' %}post-filter-btn--active{% endif %}">פרסום חתולים</a>
+  <a href="{{ url_for('posts', purpose='adoption') }}" class="post-filter-btn {% if filter_purpose == 'adoption' %}post-filter-btn--active{% endif %}">🏠 לאימוץ</a>
+  <a href="{{ url_for('posts', saved='1') }}" class="post-filter-btn {% if show_saved %}post-filter-btn--active{% endif %}">🔖 שמורים</a>
+</div>
+
+{% if posts %}
+<div style="display:flex;flex-direction:column;gap:1.5rem;margin-top:1rem">
+  {% for p in posts %}
+  <div class="post-card" id="post-{{ p.id }}">
+    <div class="post-header">
+      <div class="post-meta">
+        <strong>{{ p.username }}</strong>
+        {% if p.cat_name %}<span class="post-catname">— {{ p.cat_name }}</span>{% endif %}
+        <span class="post-time">{{ p.created_at }}</span>
+        {% if p.purpose == 'adoption' %}<span class="post-purpose-badge">🏠 לאימוץ</span>{% endif %}
+        {% if p.visibility == 'friends' %}<span class="post-visibility">חברים בלבד</span>{% endif %}
+      </div>
+      <div style="display:flex;gap:0.25rem;align-items:center">
+        <form method="POST" action="{{ url_for('post_save', post_id=p.id) }}" style="margin:0">
+          <button type="submit" class="post-save-btn {% if p.id in saved_ids %}post-save-btn--saved{% endif %}" title="{% if p.id in saved_ids %}הסר שמירה{% else %}שמור פוסט{% endif %}">🔖</button>
+        </form>
+        {% if p.user_id == uid %}
+        <form method="POST" action="{{ url_for('post_delete', post_id=p.id) }}"
+              onsubmit="return confirm('למחוק פוסט זה?')" style="margin:0">
+          <button type="submit" class="tag-delete-btn" title="מחק פוסט">✕</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if p.photo %}
+    <img src="{{ url_for('static', filename='uploads/' + p.photo) }}" class="post-photo">
+    {% endif %}
+    {% if p.caption %}
+    <div class="post-caption">{{ p.caption }}</div>
+    {% endif %}
+
+    <div class="post-comments">
+      {% for c in p.comments %}
+      <div class="post-comment">
+        <span class="post-comment-author">{{ c.username }}</span>
+        <span class="post-comment-text">{{ c.content }}</span>
+        <span class="post-comment-time">{{ c.created_at }}</span>
+        {% if c.user_id == uid or p.user_id == uid %}
+        <form method="POST" action="{{ url_for('post_comment_delete', post_id=p.id, comment_id=c.id) }}" style="display:inline">
+          <button type="submit" class="post-comment-del" title="מחק">✕</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+      <form method="POST" action="{{ url_for('post_comment', post_id=p.id) }}" class="post-comment-form">
+        <input type="text" name="content" placeholder="הוסף תגובה..." required>
+        <button type="submit" class="btn btn-secondary">שלח</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state" style="margin-top:2rem">
+  <div class="empty-icon">{% if show_saved %}🔖{% else %}📸{% endif %}</div>
+  <p>{% if show_saved %}אין פוסטים שמורים עדיין{% elif filter_purpose %}אין פוסטים בקטגוריה זו{% else %}אין פוסטים עדיין — היה הראשון לפרסם!{% endif %}</p>
+</div>
+{% endif %}
+
+{% endblock %}
