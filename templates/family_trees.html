@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block title %}עצי משפחה{% endblock %}
+{% block content %}
+<style>
+  .trees-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+  .trees-header h1 { color:#6a0dad; font-size:1.5rem; }
+  .create-form { display:flex; gap:8px; }
+  .create-form input {
+    padding:8px 14px; border-radius:10px; border:1.5px solid #c9a0e8;
+    font-family:'Rubik',sans-serif; font-size:.95rem; width:200px;
+  }
+  .create-form button {
+    padding:8px 18px; background:#6a0dad; color:#fff; border:none;
+    border-radius:10px; cursor:pointer; font-family:'Rubik',sans-serif;
+    font-weight:bold; font-size:.95rem;
+  }
+  .create-form button:hover { background:#8b2be2; }
+
+  .trees-grid { display:flex; flex-wrap:wrap; gap:20px; }
+  .tree-card {
+    background:#fff; border-radius:14px; padding:20px 24px;
+    box-shadow:0 2px 12px rgba(100,0,150,.1);
+    width:220px; text-align:center; position:relative;
+    transition:transform .15s;
+  }
+  .tree-card:hover { transform:translateY(-3px); }
+  .tree-icon { font-size:3rem; margin-bottom:8px; }
+  .tree-name { font-size:1.1rem; font-weight:bold; color:#3d006e; margin-bottom:6px; }
+  .tree-date { font-size:.78rem; color:#aaa; margin-bottom:14px; }
+  .tree-actions { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+  .btn-open {
+    padding:7px 16px; background:#6a0dad; color:#fff; border:none;
+    border-radius:8px; cursor:pointer; font-family:'Rubik',sans-serif;
+    font-weight:bold; font-size:.88rem; text-decoration:none;
+  }
+  .btn-open:hover { background:#8b2be2; }
+  .btn-del {
+    padding:7px 12px; background:#fff; color:#c00; border:1.5px solid #c00;
+    border-radius:8px; cursor:pointer; font-family:'Rubik',sans-serif;
+    font-size:.88rem;
+  }
+  .btn-del:hover { background:#fff0f0; }
+
+  .empty-state { color:#aaa; text-align:center; padding:60px 20px; font-size:1rem; }
+</style>
+
+<div class="trees-header">
+  <h1>🐱🌳 עצי משפחה</h1>
+  <form class="create-form" method="post" action="{{ url_for('family_tree_create') }}">
+    <input type="text" name="name" placeholder="שם העץ החדש..." maxlength="60">
+    <button type="submit">+ צור עץ</button>
+  </form>
+</div>
+
+{% if trees %}
+<div class="trees-grid">
+  {% for tree in trees %}
+  <div class="tree-card">
+    <div class="tree-icon">🐱🌳</div>
+    <div class="tree-name">{{ tree.name }}</div>
+    <div class="tree-date">{{ tree.created_at[:10] }}</div>
+    <div class="tree-actions">
+      <a class="btn-open" href="{{ url_for('family_tree_view', tree_id=tree.id) }}">פתח</a>
+      <form method="post" action="{{ url_for('family_tree_delete', tree_id=tree.id) }}"
+            onsubmit="return confirm('למחוק את העץ \'{{ tree.name }}\'?')">
+        <button class="btn-del" type="submit">מחק</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  אין עצי משפחה עדיין.<br>צור עץ חדש בעזרת הטופס למעלה.
+</div>
+{% endif %}
+
+{% if shared_trees %}
+<h2 style="color:#6a0dad;font-size:1.1rem;margin:32px 0 14px;display:flex;align-items:center;gap:8px;">
+  🔗 עצים ששותפו איתי
+</h2>
+<div class="trees-grid">
+  {% for tree in shared_trees %}
+  <div class="tree-card">
+    <div class="tree-icon">🐱🌳</div>
+    <div class="tree-name">{{ tree.name }}</div>
+    <div style="font-size:.78rem;color:#8b2be2;margin-bottom:4px;">של {{ tree.owner_name }}</div>
+    <div class="tree-date">{{ tree.created_at[:10] }}</div>
+    <div class="tree-actions">
+      <a class="btn-open" href="{{ url_for('family_tree_view', tree_id=tree.id) }}">פתח</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

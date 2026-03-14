@@ -1403,3 +1403,170 @@ input[type="password"]:focus {
   font-family: inherit;
   font-size: 0.93rem;
 }
+
+/* ════════════════════════════════════════
+   RESPONSIVE — tablet (≤ 768px)
+   ════════════════════════════════════════ */
+@media (max-width: 768px) {
+  nav {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .nav-brand {
+    font-size: 1.4rem;
+  }
+
+  .nav-links {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    font-size: 0.88rem;
+    width: 100%;
+  }
+
+  .nav-links a {
+    padding: 0.35rem 0.65rem;
+    font-size: 0.88rem;
+  }
+
+  main {
+    margin: 1rem auto;
+    padding: 0 0.9rem;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .page-title {
+    font-size: 1.5rem;
+  }
+
+  .cats-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+  }
+
+  .auth-container {
+    margin: 2rem auto;
+    padding: 1.75rem 1.5rem;
+  }
+
+  .form-card {
+    padding: 1.5rem;
+  }
+
+  .friend-card {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .chat-window {
+    height: 320px;
+  }
+
+  .similar-notice {
+    right: 0.75rem;
+    left: 0.75rem;
+    transform: none;
+    max-width: 100%;
+  }
+
+  .result-name {
+    font-size: 1.7rem;
+  }
+}
+
+/* ════════════════════════════════════════
+   RESPONSIVE — mobile (≤ 480px)
+   ════════════════════════════════════════ */
+@media (max-width: 480px) {
+  .nav-brand {
+    font-size: 1.2rem;
+  }
+
+  .nav-links span {
+    display: none; /* hide "שלום, X" on very small screens */
+  }
+
+  .nav-links a {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.82rem;
+  }
+
+  main {
+    padding: 0 0.6rem;
+  }
+
+  .page-title {
+    font-size: 1.3rem;
+  }
+
+  .cats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-container {
+    margin: 1rem auto;
+    padding: 1.25rem 1rem;
+    border-radius: 16px;
+  }
+
+  .auth-title {
+    font-size: 1.6rem;
+  }
+
+  .btn {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.95rem;
+  }
+
+  .cat-actions {
+    flex-direction: column;
+  }
+
+  .cat-actions .btn {
+    width: 100%;
+    text-align: center;
+  }
+
+  .friend-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .chat-window {
+    height: 260px;
+  }
+
+  .chat-bubble {
+    max-width: 88%;
+  }
+
+  .notif-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .result-name {
+    font-size: 1.4rem;
+  }
+
+  .identify-card,
+  .identify-container {
+    padding: 1rem;
+  }
+
+  .post-filters {
+    gap: 0.35rem;
+  }
+
+  .post-filter-btn {
+    font-size: 0.82rem;
+    padding: 0.3rem 0.65rem;
+  }
+}

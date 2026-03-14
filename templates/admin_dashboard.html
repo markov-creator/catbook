@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>לוח בקרה - מנהל</title>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#f5f0ff; font-family:'Rubik',sans-serif; color:#333; }
+  header { background:#3d006e; color:#fff; padding:14px 28px; display:flex; align-items:center; justify-content:space-between; }
+  header h1 { font-size:1.2rem; }
+  header a { color:#e0c0ff; font-size:.88rem; text-decoration:none; }
+  header a:hover { color:#fff; }
+
+  .container { max-width:1100px; margin:28px auto; padding:0 20px; }
+
+  /* Flash */
+  .flash-admin { background:#e8f5e9; border:1.5px solid #4caf50; border-radius:10px;
+                 padding:12px 18px; margin-bottom:20px; color:#2e7d32; font-weight:bold;
+                 word-break:break-all; }
+
+  /* Tabs */
+  .tabs { display:flex; gap:0; margin-bottom:0; }
+  .tab { padding:10px 24px; background:#e8d5f7; border-radius:12px 12px 0 0; cursor:pointer;
+         font-weight:bold; color:#6a0dad; border:2px solid transparent; font-family:'Rubik',sans-serif; font-size:.95rem; }
+  .tab.active { background:#fff; border-color:#c9a0e8; border-bottom-color:#fff; color:#3d006e; }
+  .tab-content { display:none; background:#fff; border-radius:0 12px 12px 12px;
+                 border:2px solid #c9a0e8; padding:20px; }
+  .tab-content.active { display:block; }
+
+  /* Table */
+  table { width:100%; border-collapse:collapse; font-size:.88rem; }
+  th { background:#f3e8ff; color:#6a0dad; padding:10px 12px; text-align:right; font-weight:bold; }
+  td { padding:9px 12px; border-bottom:1px solid #f0e8ff; vertical-align:middle; }
+  tr:hover td { background:#faf5ff; }
+
+  /* Buttons */
+  .btn { padding:5px 12px; border-radius:7px; border:none; cursor:pointer;
+         font-family:'Rubik',sans-serif; font-weight:bold; font-size:.82rem; }
+  .btn-red   { background:#ffebee; color:#c00; border:1px solid #ffcdd2; }
+  .btn-red:hover { background:#ffcdd2; }
+  .btn-blue  { background:#e3f2fd; color:#1565c0; border:1px solid #bbdefb; }
+  .btn-blue:hover { background:#bbdefb; }
+  .btn-gray  { background:#f5f5f5; color:#555; border:1px solid #ddd; }
+
+  /* Post photo */
+  .post-thumb { width:50px; height:50px; object-fit:cover; border-radius:6px; }
+
+  .badge { display:inline-block; background:#e8d5f7; color:#6a0dad; border-radius:20px;
+           padding:2px 9px; font-size:.78rem; font-weight:bold; }
+  .badge-green { background:#e8f5e9; color:#2e7d32; }
+  .badge-orange { background:#fff3e0; color:#e65100; }
+
+  .temp-pw { font-family:monospace; background:#fff9c4; padding:2px 8px; border-radius:4px;
+             font-size:1rem; letter-spacing:1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡️ לוח בקרה - מנהל CatBook</h1>
+  <a href="{{ url_for('admin_logout') }}">התנתק</a>
+</header>
+
+<div class="container">
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, msg in messages %}
+      {% if 'admin' in category %}
+        <div class="flash-admin">{{ msg }}</div>
+      {% endif %}
+    {% endfor %}
+  {% endwith %}
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('users', this)">👤 משתמשים ({{ users|length }})</button>
+    <button class="tab" onclick="showTab('friends', this)">🤝 חברויות ({{ friendships|length }})</button>
+    <button class="tab" onclick="showTab('posts', this)">📸 פוסטים ({{ posts|length }})</button>
+    <button class="tab" onclick="showTab('logs', this)">📋 כניסות ({{ logs|length }})</button>
+  </div>
+
+  <!-- ── Users ── -->
+  <div id="tab-users" class="tab-content active">
+    <table>
+      <tr>
+        <th>ID</th><th>שם משתמש</th><th>חתולים</th><th>פוסטים</th><th>חברים</th><th>פעולות</th>
+      </tr>
+      {% for u in users %}
+      <tr>
+        <td><span class="badge">{{ u.id }}</span></td>
+        <td><strong>{{ u.username }}</strong></td>
+        <td>{{ u.cat_count }}</td>
+        <td>{{ u.post_count }}</td>
+        <td>{{ u.friend_count }}</td>
+        <td style="display:flex;gap:6px;flex-wrap:wrap;">
+          <form method="post" action="{{ url_for('admin_reset_password', uid=u.id) }}">
+            <button class="btn btn-blue" type="submit"
+                    onclick="return confirm('לאפס סיסמה של {{ u.username }}?')">🔑 אפס סיסמה</button>
+          </form>
+          <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}">
+            <button class="btn btn-red" type="submit"
+                    onclick="return confirm('למחוק לצמיתות את המשתמש {{ u.username }} וכל הנתונים שלו?')">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- ── Friendships ── -->
+  <div id="tab-friends" class="tab-content">
+    <table>
+      <tr><th>משתמש 1</th><th>משתמש 2</th><th>סטטוס</th><th>פעולות</th></tr>
+      {% for f in friendships %}
+      <tr>
+        <td>{{ f.user1 }}</td>
+        <td>{{ f.user2 }}</td>
+        <td>
+          {% if f.status == 'accepted' %}
+            <span class="badge badge-green">✓ מאושר</span>
+          {% else %}
+            <span class="badge badge-orange">⏳ ממתין</span>
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('admin_delete_friendship', fid=f.id) }}">
+            <button class="btn btn-red" type="submit">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- ── Login Logs ── -->
+  <div id="tab-logs" class="tab-content">
+    <table>
+      <tr><th>תאריך ושעה</th><th>משתמש</th><th>IP</th><th>סטטוס</th></tr>
+      {% for l in logs %}
+      <tr>
+        <td style="direction:ltr;text-align:right;font-size:.82rem;">{{ l.logged_at }}</td>
+        <td>{{ l.username }}</td>
+        <td style="direction:ltr;font-size:.82rem;">{{ l.ip or '—' }}</td>
+        <td>
+          {% if l.success %}
+            <span class="badge badge-green">✓ הצליח</span>
+          {% else %}
+            <span class="badge" style="background:#ffebee;color:#c00;">✗ נכשל</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">אין כניסות עדיין</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- ── Posts ── -->
+  <div id="tab-posts" class="tab-content">
+    <table>
+      <tr><th>תמונה</th><th>משתמש</th><th>כיתוב</th><th>תגובות</th><th>תאריך</th><th>פעולות</th></tr>
+      {% for p in posts %}
+      <tr>
+        <td>
+          {% if p.photo %}
+            <img class="post-thumb" src="/static/uploads/{{ p.photo }}" alt="">
+          {% else %}—{% endif %}
+        </td>
+        <td>{{ p.username }}</td>
+        <td>{{ (p.caption or '')[:60] }}{% if p.caption and p.caption|length > 60 %}…{% endif %}</td>
+        <td>{{ p.comment_count }}</td>
+        <td>{{ p.created_at[:10] }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin_delete_post', post_id=p.id) }}">
+            <button class="btn btn-red" type="submit"
+                    onclick="return confirm('למחוק פוסט זה?')">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+</div>
+
+<script>
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  location.hash = name;
+}
+// Auto-open tab from hash
+const hash = location.hash.replace('#','');
+if (hash) {
+  const btn = [...document.querySelectorAll('.tab')].find(b => b.onclick.toString().includes("'"+hash+"'"));
+  if (btn) showTab(hash, btn);
+}
+</script>
+</body>
+</html>

@@ -1,7 +1,10 @@
 flask
 werkzeug
 Pillow
+pillow-heif
 python-dotenv
 numpy
 torch
 transformers
+cloudinary
+requests

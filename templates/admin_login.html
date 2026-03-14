@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#1a0030; display:flex; align-items:center; justify-content:center; min-height:100vh; font-family:'Rubik',sans-serif; }
+  .box { background:#fff; border-radius:16px; padding:36px 40px; width:340px; box-shadow:0 8px 40px rgba(0,0,0,.4); }
+  h2 { color:#3d006e; text-align:center; margin-bottom:24px; font-size:1.3rem; }
+  label { display:block; color:#555; font-size:.85rem; margin-bottom:4px; }
+  input { width:100%; padding:10px 14px; border-radius:8px; border:1.5px solid #c9a0e8;
+          font-family:'Rubik',sans-serif; font-size:.95rem; margin-bottom:14px; }
+  input:focus { outline:none; border-color:#6a0dad; }
+  button { width:100%; padding:11px; background:#3d006e; color:#fff; border:none;
+           border-radius:10px; font-family:'Rubik',sans-serif; font-weight:800;
+           font-size:1rem; cursor:pointer; margin-top:4px; }
+  button:hover { background:#6a0dad; }
+  .error { color:#c00; text-align:center; font-size:.88rem; margin-bottom:12px; }
+  .hint { color:#aaa; font-size:.75rem; text-align:center; margin-top:14px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h2>🔐 כניסת מנהל</h2>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <form method="post">
+    <label>שם משתמש</label>
+    <input type="text" name="username" autocomplete="off" required>
+    <label>סיסמה</label>
+    <input type="password" name="password" required>
+    <label>קוד סודי</label>
+    <input type="password" name="secret" required placeholder="••••••••">
+    <button type="submit">כניסה</button>
+  </form>
+  <div class="hint">כתובת זו אינה מפורסמת באתר</div>
+</div>
+</body>
+</html>

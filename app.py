@@ -4,16 +4,22 @@ import sqlite3
 from functools import wraps
 
 import numpy as np
-import torch
-from transformers import AutoImageProcessor, AutoModel
 from flask import (Flask, flash, g, jsonify, redirect,
                    render_template, request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
-from werkzeug.utils import secure_filename
 from PIL import Image
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
 from dotenv import load_dotenv
 
 load_dotenv()
+
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', '')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+ADMIN_SECRET   = os.environ.get('ADMIN_SECRET', '')
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'catbook-secret-2024')
@@ -24,61 +30,82 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
-
-# ---------- Feature extraction (local, no API) ----------
-
-_extractor = None
-_preprocess = None
-
-
-MODEL_VERSION = 'dinov2-base-v1'
-DINO_MODEL_ID = 'facebook/dinov2-base'
+def local_save(pil_img, public_id):
+    """Save a PIL image locally, return filename."""
+    filename = f'{public_id}.jpg'
+    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    pil_img.convert('RGB').save(path, format='JPEG', quality=85)
+    return filename
 
 
-def get_extractor():
-    global _extractor, _preprocess
-    if _extractor is None:
-        _preprocess = AutoImageProcessor.from_pretrained(DINO_MODEL_ID)
-        _extractor = AutoModel.from_pretrained(DINO_MODEL_ID)
-        _extractor.eval()
-    return _extractor, _preprocess
+def local_delete(filename):
+    """Delete a local image file."""
+    if not filename or filename.startswith('http'):
+        return
+    try:
+        path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        print(f"local_delete error: {e}")
 
 
-def _l2_normalize(vec):
-    arr = np.array(vec, dtype=np.float32)
-    norm = np.linalg.norm(arr)
-    return (arr / norm).tolist() if norm > 0 else arr.tolist()
+# ---------- Feature extraction ----------
+
+MODEL_VERSION = 'dinov2-small-onnx-v1'
+_onnx_session = None
+
+_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def get_onnx_session():
+    global _onnx_session
+    if _onnx_session is None:
+        import onnxruntime as ort
+        model_path = os.path.join(app.root_path, 'dinov2_small.onnx')
+        _onnx_session = ort.InferenceSession(model_path,
+                                             providers=['CPUExecutionProvider'])
+    return _onnx_session
+
+
+def _preprocess_img(img):
+    arr = np.array(img.resize((224, 224)), dtype=np.float32) / 255.0
+    arr = (arr - _MEAN) / _STD
+    return arr.transpose(2, 0, 1)  # HWC -> CHW
 
 
 def extract_features(img_input):
-    """Extract L2-normalized DINOv2 CLS features with 5-crop TTA."""
-    model, processor = get_extractor()
-    img = Image.open(img_input).convert('RGB')
+    """Extract DINOv2-small CLS features with 5-crop TTA via ONNX."""
+    session = get_onnx_session()
+    if isinstance(img_input, Image.Image):
+        img = img_input.convert('RGB')
+    else:
+        img = Image.open(img_input).convert('RGB')
     w, h = img.size
-    imgs = [
-        img,                                                   # original
-        img.transpose(Image.FLIP_LEFT_RIGHT),                  # h-flip
-        img.crop((w // 10, h // 10, w * 9 // 10, h * 9 // 10)),  # center 80%
-        img.crop((0, 0, w * 4 // 5, h)),                       # left 80%
-        img.crop((w // 5, 0, w, h)),                           # right 80%
+    crops = [
+        img,
+        img.transpose(Image.FLIP_LEFT_RIGHT),
+        img.crop((w // 10, h // 10, w * 9 // 10, h * 9 // 10)),
+        img.crop((0, 0, w * 4 // 5, h)),
+        img.crop((w // 5, 0, w, h)),
     ]
-    inputs = processor(images=imgs, return_tensors='pt')
-    with torch.no_grad():
-        outputs = model(**inputs)
-    feats = outputs.last_hidden_state[:, 0]  # CLS token, shape (5, 768)
-    avg = feats.mean(dim=0)
-    return _l2_normalize(avg.tolist())
+    batch = np.stack([_preprocess_img(c) for c in crops])
+    out = session.run(None, {'pixel_values': batch})[0]  # (5, seq, 384)
+    cls_tokens = out[:, 0, :]  # CLS token per crop
+    avg = cls_tokens.mean(axis=0)
+    norm = np.linalg.norm(avg)
+    return (avg / norm).tolist() if norm > 0 else avg.tolist()
 
 
 def cosine_sim(a, b):
-    # both L2-normalized → dot product == cosine similarity
     return float(np.dot(np.array(a, dtype=np.float32), np.array(b, dtype=np.float32)))
 
 
-def push_notification(db, user_id, ntype, from_user_id=None, cat_id=None, photo=None, location=None, location_precise=None):
+def push_notification(db, user_id, ntype, from_user_id=None, cat_id=None, photo=None, location=None, location_precise=None, tree_id=None):
     db.execute(
-        'INSERT INTO notifications (user_id, type, from_user_id, cat_id, photo, location, location_precise) VALUES (?,?,?,?,?,?,?)',
-        (user_id, ntype, from_user_id, cat_id, photo, location, location_precise)
+        'INSERT INTO notifications (user_id, type, from_user_id, cat_id, photo, location, location_precise, tree_id) VALUES (?,?,?,?,?,?,?,?)',
+        (user_id, ntype, from_user_id, cat_id, photo, location, location_precise, tree_id)
     )
     db.commit()
 
@@ -124,7 +151,8 @@ def find_similar_cat(db, feats, uid, threshold=0.55):
 
 def get_db():
     if 'db' not in g:
-        g.db = sqlite3.connect('catbook.db')
+        db_path = os.path.join(app.root_path, 'catbook.db')
+        g.db = sqlite3.connect(db_path)
         g.db.row_factory = sqlite3.Row
     return g.db
 
@@ -237,6 +265,10 @@ def init_db():
             db.execute('ALTER TABLE notifications ADD COLUMN location_precise TEXT')
         except Exception:
             pass
+        try:
+            db.execute('ALTER TABLE notifications ADD COLUMN tree_id INTEGER')
+        except Exception:
+            pass
         db.execute('''CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_id INTEGER NOT NULL,
@@ -332,6 +364,44 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (post_id) REFERENCES posts(id)
         )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS cat_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cat_id INTEGER NOT NULL,
+            related_cat_id INTEGER NOT NULL,
+            relation TEXT NOT NULL,
+            created_by INTEGER NOT NULL,
+            FOREIGN KEY (cat_id) REFERENCES cats(id),
+            FOREIGN KEY (related_cat_id) REFERENCES cats(id),
+            UNIQUE(cat_id, related_cat_id, relation)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS family_trees (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS login_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            user_id INTEGER,
+            success INTEGER NOT NULL DEFAULT 0,
+            ip TEXT,
+            logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )''')
+        try:
+            db.execute('ALTER TABLE cat_relations ADD COLUMN tree_id INTEGER')
+        except Exception:
+            pass
+        db.execute('''CREATE TABLE IF NOT EXISTS tree_shares (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tree_id INTEGER NOT NULL,
+            shared_with_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tree_id) REFERENCES family_trees(id),
+            FOREIGN KEY (shared_with_id) REFERENCES users(id),
+            UNIQUE(tree_id, shared_with_id)
+        )''')
         db.commit()
 
 
@@ -349,22 +419,22 @@ def login_required(f):
 # ---------- Utility ----------
 
 def save_photo(file_storage, cat_id):
+    """Save photo locally. Returns (filename, pil_img) or (None, None)."""
     if not file_storage or not file_storage.filename:
-        return None
+        return None, None
     ext = os.path.splitext(file_storage.filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         print(f"save_photo: extension not allowed: {ext!r}")
-        return None
+        return None, None
     try:
-        filename = f'cat_{cat_id}_{os.urandom(8).hex()}{ext}'
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        img = Image.open(file_storage)
+        img = Image.open(file_storage).convert('RGB')
         img.thumbnail((900, 900), Image.LANCZOS)
-        img.save(filepath)
-        return filename
+        public_id = f'cat_{cat_id}_{os.urandom(8).hex()}'
+        filename = local_save(img, public_id)
+        return filename, img
     except Exception as e:
         print(f"save_photo error: {e}")
-        return None
+        return None, None
 
 
 def get_or_compute_features(db, photo_id, filename):
@@ -372,11 +442,12 @@ def get_or_compute_features(db, photo_id, filename):
     row = db.execute('SELECT features FROM cat_photos WHERE id = ?', (photo_id,)).fetchone()
     if row and row['features']:
         return json.loads(row['features'])
-    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    if not os.path.exists(path):
-        return None
     try:
-        feat = extract_features(path)
+        if filename.startswith('http'):
+            img_input = filename
+        else:
+            img_input = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        feat = extract_features(img_input)
         db.execute('UPDATE cat_photos SET features = ? WHERE id = ?',
                    (json.dumps(feat), photo_id))
         db.commit()
@@ -402,10 +473,17 @@ def login():
         password = request.form['password']
         db = get_db()
         user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+        ip = request.remote_addr
         if user and check_password_hash(user['password'], password):
             session['user_id'] = user['id']
             session['username'] = user['username']
+            db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,1,?)',
+                       (username, user['id'], ip))
+            db.commit()
             return redirect(url_for('cats'))
+        db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,0,?)',
+                   (username, user['id'] if user else None, ip))
+        db.commit()
         flash('שם משתמש או סיסמה שגויים')
     return render_template('login.html')
 
@@ -497,18 +575,16 @@ def add_cat():
 
         all_feats = []
         for file in request.files.getlist('photos'):
-            filename = save_photo(file, cat_id)
-            if filename:
-                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            url, pil_img = save_photo(file, cat_id)
+            if url:
                 try:
-                    feat = extract_features(filepath)
+                    feat = extract_features(pil_img)
                     feat_json = json.dumps(feat)
                     all_feats.append(feat)
                 except Exception:
-                    feat = None
                     feat_json = None
                 db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
-                           (cat_id, filename, feat_json))
+                           (cat_id, url, feat_json))
         db.commit()
 
         # Check if any uploaded photo resembles another user's cat
@@ -540,18 +616,17 @@ def add_photo(cat_id):
         return jsonify({'error': 'לא נמצא'}), 404
 
     file = request.files.get('photo')
-    filename = save_photo(file, cat_id)
-    if filename:
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    url, pil_img = save_photo(file, cat_id)
+    if url:
         try:
-            feat = extract_features(filepath)
+            feat = extract_features(pil_img)
             feat_json = json.dumps(feat)
         except Exception as e:
             app.logger.error(f'extract_features failed: {e}')
             feat = None
             feat_json = None
         db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
-                   (cat_id, filename, feat_json))
+                   (cat_id, url, feat_json))
         db.commit()
 
         # Check if the uploaded photo resembles any other user's cat
@@ -568,7 +643,7 @@ def add_photo(cat_id):
                     db.execute('INSERT OR IGNORE INTO shared_details (cat_id_1, cat_id_2) VALUES (?,?)', (c1, c2))
                     db.commit()
 
-        return jsonify({'success': True, 'filename': filename})
+        return jsonify({'success': True, 'filename': url})
     return jsonify({'error': 'קובץ לא תקין'}), 400
 
 
@@ -754,9 +829,7 @@ def delete_photo(photo_id):
         WHERE p.id = ? AND c.user_id = ?
     ''', (photo_id, session['user_id'])).fetchone()
     if photo:
-        path = os.path.join(app.config['UPLOAD_FOLDER'], photo['filename'])
-        if os.path.exists(path):
-            os.remove(path)
+        local_delete(photo['filename'])
         db.execute('DELETE FROM cat_photos WHERE id = ?', (photo_id,))
         db.commit()
     return redirect(url_for('cats'))
@@ -772,9 +845,7 @@ def delete_cat(cat_id):
         photos = db.execute('SELECT filename FROM cat_photos WHERE cat_id = ?',
                             (cat_id,)).fetchall()
         for p in photos:
-            path = os.path.join(app.config['UPLOAD_FOLDER'], p['filename'])
-            if os.path.exists(path):
-                os.remove(path)
+            local_delete(p['filename'])
         db.execute('DELETE FROM cat_photos WHERE cat_id = ?', (cat_id,))
         db.execute('DELETE FROM cat_details WHERE cat_id = ?', (cat_id,))
         # Clean up shared details and their history
@@ -892,6 +963,7 @@ def identify():
                 }
                 for c in matched
             ]
+            session['identify_temp_url'] = temp_filename
             result = {'identified': identified, 'few_photos': few_photos_warning,
                       'temp_filename': temp_filename}
             # Notify owners of identified cats
@@ -924,25 +996,29 @@ def identify_save_photo():
         flash('שגיאה: חתול לא נמצא')
         return redirect(url_for('identify'))
 
-    # Validate temp file exists and belongs to this user (filename contains user_id)
-    expected_prefix = f'temp_{session["user_id"]}_'
-    temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
-    if not temp_filename.startswith(expected_prefix) or not os.path.exists(temp_path):
+    # Validate temp URL matches what we stored in session
+    session_url = session.get('identify_temp_url', '')
+    if not temp_filename or temp_filename != session_url:
         flash('שגיאה: קובץ זמני לא נמצא')
         return redirect(url_for('identify'))
+    session.pop('identify_temp_url', None)
 
-    # Rename to permanent filename
-    ext = os.path.splitext(temp_filename)[1]
-    new_filename = f'cat_{cat_id}_{os.urandom(8).hex()}{ext}'
-    new_path = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
-    os.rename(temp_path, new_path)
-
-    # Compute features and store
+    # Move temp file to permanent cat photo
     try:
-        feat = extract_features(new_path)
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
+        if not os.path.exists(temp_path):
+            flash('קובץ זמני לא נמצא')
+            return redirect(url_for('identify'))
+        img = Image.open(temp_path).convert('RGB')
+        img.thumbnail((900, 900), Image.LANCZOS)
+        public_id = f'cat_{cat_id}_{os.urandom(8).hex()}'
+        new_filename = local_save(img, public_id)
+        os.remove(temp_path)
+        feat = extract_features(img)
         feat_json = json.dumps(feat)
-    except Exception:
-        feat_json = None
+    except Exception as e:
+        flash(f'שגיאה בשמירת התמונה: {e}')
+        return redirect(url_for('identify'))
 
     db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
                (cat_id, new_filename, feat_json))
@@ -1047,7 +1123,7 @@ def friend_add(user_id):
         return redirect(url_for('friends'))
     db = get_db()
     context_photo = request.form.get('context_photo', '').strip()
-    if context_photo and not context_photo.startswith(f'temp_{uid}_'):
+    if context_photo and context_photo != session.get('identify_temp_url', ''):
         context_photo = ''
     context_cat_id = request.form.get('context_cat_id', type=int)
     context_own_cat_id = request.form.get('context_own_cat_id', type=int)
@@ -1124,24 +1200,25 @@ def save_found_photo():
         flash('לא נמצא חתול')
         return redirect(url_for('friends'))
 
-    # Verify file exists
-    src = os.path.join(app.config['UPLOAD_FOLDER'], photo_filename)
-    if not os.path.exists(src):
+    if not photo_filename:
         flash('הקובץ לא נמצא')
         return redirect(url_for('friends'))
 
-    # Save as permanent photo
-    ext = os.path.splitext(photo_filename)[1].lower()
-    new_filename = f'cat_{cat_id}_{os.urandom(6).hex()}{ext}'
-    dst = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
-    import shutil
-    shutil.copy2(src, dst)
-
+    # Copy local photo to permanent cat photo
     try:
-        feat = extract_features(dst)
+        src_path = os.path.join(app.config['UPLOAD_FOLDER'], photo_filename)
+        if not os.path.exists(src_path):
+            flash('קובץ לא נמצא')
+            return redirect(url_for('friends'))
+        img = Image.open(src_path).convert('RGB')
+        img.thumbnail((900, 900), Image.LANCZOS)
+        public_id = f'cat_{cat_id}_{os.urandom(6).hex()}'
+        new_filename = local_save(img, public_id)
+        feat = extract_features(img)
         feat_json = json.dumps(feat)
-    except Exception:
-        feat_json = None
+    except Exception as e:
+        flash(f'שגיאה בשמירת התמונה: {e}')
+        return redirect(url_for('friends'))
 
     db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
                (cat_id, new_filename, feat_json))
@@ -1175,10 +1252,11 @@ def notifications():
 
     query = '''
         SELECT n.id, n.type, n.photo, n.cat_id, n.is_read, n.created_at, n.location, n.location_precise,
-               u.username as from_username, c.name as cat_name
+               n.tree_id, u.username as from_username, c.name as cat_name, ft.name as tree_name
         FROM notifications n
         LEFT JOIN users u ON u.id = n.from_user_id
         LEFT JOIN cats c ON c.id = n.cat_id
+        LEFT JOIN family_trees ft ON ft.id = n.tree_id
         WHERE n.user_id = ?
     '''
     params = [uid]
@@ -1214,6 +1292,8 @@ def notifications():
             'cat_photos': cat_photos,
             'location': n['location'],
             'location_precise': n['location_precise'],
+            'tree_id': n['tree_id'],
+            'tree_name': n['tree_name'],
         })
     # Mark all as read
     db.execute('UPDATE notifications SET is_read=1 WHERE user_id=?', (uid,))
@@ -1252,10 +1332,13 @@ def chat(friend_id):
         if image_file and image_file.filename:
             ext = os.path.splitext(image_file.filename)[1].lower()
             if ext in ALLOWED_EXTENSIONS:
-                image_filename = f'msg_{uid}_{os.urandom(8).hex()}{ext}'
-                img = Image.open(image_file).convert('RGB')
-                img.thumbnail((1200, 1200), Image.LANCZOS)
-                img.save(os.path.join(app.config['UPLOAD_FOLDER'], image_filename))
+                try:
+                    img = Image.open(image_file).convert('RGB')
+                    img.thumbnail((1200, 1200), Image.LANCZOS)
+                    public_id = f'msg_{uid}_{os.urandom(8).hex()}'
+                    image_filename = local_save(img, public_id)
+                except Exception as e:
+                    print(f"chat image upload error: {e}")
 
         if content or image_filename:
             db.execute(
@@ -1366,10 +1449,13 @@ def post_create():
     if file and file.filename:
         ext = os.path.splitext(file.filename)[1].lower()
         if ext in ALLOWED_EXTENSIONS:
-            photo = f'post_{uid}_{os.urandom(8).hex()}{ext}'
-            img = Image.open(file).convert('RGB')
-            img.thumbnail((1200, 1200), Image.LANCZOS)
-            img.save(os.path.join(app.config['UPLOAD_FOLDER'], photo))
+            try:
+                img = Image.open(file).convert('RGB')
+                img.thumbnail((1200, 1200), Image.LANCZOS)
+                public_id = f'post_{uid}_{os.urandom(8).hex()}'
+                photo = local_save(img, public_id)
+            except Exception as e:
+                print(f"post upload error: {e}")
     if not photo and not caption:
         flash('נא להוסיף תמונה או כיתוב')
         return redirect(url_for('posts'))
@@ -1387,9 +1473,7 @@ def post_delete(post_id):
     post = db.execute('SELECT id, photo, user_id FROM posts WHERE id=?', (post_id,)).fetchone()
     if post and post['user_id'] == uid:
         if post['photo']:
-            path = os.path.join(app.config['UPLOAD_FOLDER'], post['photo'])
-            if os.path.exists(path):
-                os.remove(path)
+            local_delete(post['photo'])
         db.execute('DELETE FROM post_comments WHERE post_id=?', (post_id,))
         db.execute('DELETE FROM posts WHERE id=?', (post_id,))
         db.commit()
@@ -1437,6 +1521,405 @@ def post_save(post_id):
     return redirect(request.referrer or url_for('posts') + f'#post-{post_id}')
 
 
+
+def _get_accessible_cats(db, uid):
+    """Return list of cat dicts accessible to uid (own + friends')."""
+    my_cats = db.execute(
+        """SELECT c.id, c.name, MIN(cp.filename) as photo, ? as owner, ? as owner_id, 1 as is_mine
+           FROM cats c LEFT JOIN cat_photos cp ON cp.cat_id=c.id
+           WHERE c.user_id=? GROUP BY c.id""", (session['username'], uid, uid)
+    ).fetchall()
+    friends = db.execute(
+        """SELECT u.id, u.username FROM friendships f
+           JOIN users u ON u.id=CASE WHEN f.requester_id=? THEN f.receiver_id ELSE f.requester_id END
+           WHERE (f.requester_id=? OR f.receiver_id=?) AND f.status='accepted'""",
+        (uid, uid, uid)
+    ).fetchall()
+    friend_cats = []
+    for fr in friends:
+        for cat in db.execute(
+            """SELECT c.id, c.name, MIN(cp.filename) as photo
+               FROM cats c LEFT JOIN cat_photos cp ON cp.cat_id=c.id
+               WHERE c.user_id=? GROUP BY c.id""", (fr['id'],)
+        ).fetchall():
+            friend_cats.append({'id': cat['id'], 'name': cat['name'], 'photo': cat['photo'],
+                                 'owner': fr['username'], 'owner_id': fr['id'], 'is_mine': False})
+    return [dict(c) for c in my_cats], friend_cats
+
+
+@app.route('/family-tree')
+@login_required
+def family_tree():
+    db = get_db()
+    uid = session['user_id']
+    my_trees = db.execute(
+        'SELECT * FROM family_trees WHERE owner_id=? ORDER BY created_at DESC', (uid,)
+    ).fetchall()
+    shared_trees = db.execute(
+        '''SELECT ft.*, u.username as owner_name FROM tree_shares ts
+           JOIN family_trees ft ON ft.id = ts.tree_id
+           JOIN users u ON u.id = ft.owner_id
+           WHERE ts.shared_with_id=? ORDER BY ft.created_at DESC''', (uid,)
+    ).fetchall()
+    return render_template('family_trees.html', trees=my_trees, shared_trees=shared_trees)
+
+
+@app.route('/family-tree/create', methods=['POST'])
+@login_required
+def family_tree_create():
+    name = request.form.get('name', '').strip() or 'עץ משפחה חדש'
+    db = get_db()
+    uid = session['user_id']
+    cur = db.execute('INSERT INTO family_trees (name, owner_id) VALUES (?,?)', (name, uid))
+    db.commit()
+    return redirect(url_for('family_tree_view', tree_id=cur.lastrowid))
+
+
+@app.route('/family-tree/<int:tree_id>/delete', methods=['POST'])
+@login_required
+def family_tree_delete(tree_id):
+    db = get_db()
+    uid = session['user_id']
+    db.execute('DELETE FROM family_trees WHERE id=? AND owner_id=?', (tree_id, uid))
+    db.execute('DELETE FROM cat_relations WHERE tree_id=? AND created_by=?', (tree_id, uid))
+    db.commit()
+    return redirect(url_for('family_tree'))
+
+
+@app.route('/family-tree/<int:tree_id>/rename', methods=['POST'])
+@login_required
+def family_tree_rename(tree_id):
+    name = request.form.get('name', '').strip()
+    if name:
+        db = get_db()
+        db.execute('UPDATE family_trees SET name=? WHERE id=? AND owner_id=?',
+                   (name, tree_id, session['user_id']))
+        db.commit()
+    return redirect(url_for('family_tree_view', tree_id=tree_id))
+
+
+@app.route('/family-tree/<int:tree_id>')
+@login_required
+def family_tree_view(tree_id):
+    db = get_db()
+    uid = session['user_id']
+    tree = db.execute('SELECT * FROM family_trees WHERE id=?', (tree_id,)).fetchone()
+
+    if not tree:
+        flash('עץ לא נמצא')
+        return redirect(url_for('family_tree'))
+
+    is_owner = (tree['owner_id'] == uid)
+    is_shared = db.execute(
+        'SELECT 1 FROM tree_shares WHERE tree_id=? AND shared_with_id=?', (tree_id, uid)
+    ).fetchone() is not None
+
+    if not is_owner and not is_shared:
+        flash('אין לך גישה לעץ זה')
+        return redirect(url_for('family_tree'))
+
+    my_cats, friend_cats = _get_accessible_cats(db, uid)
+    all_ids = [c['id'] for c in my_cats] + [c['id'] for c in friend_cats]
+
+    relations = []
+    if all_ids:
+        ph = ','.join('?' * len(all_ids))
+        relations = [dict(r) for r in db.execute(
+            f"SELECT id, cat_id, related_cat_id, relation, created_by FROM cat_relations "
+            f"WHERE tree_id=? AND cat_id IN ({ph}) AND related_cat_id IN ({ph})",
+            [tree_id] + all_ids + all_ids
+        ).fetchall()]
+
+    cat_names = {c['id']: c['name'] for c in my_cats}
+    cat_names.update({c['id']: c['name'] for c in friend_cats})
+    rel_labels = {'father': '← האבא שלו/שלה:', 'mother': '← האמא שלו/שלה:',
+                  'child': '← ילד/ה שלו/שלה:', 'sibling': 'אח/אחות של'}
+
+    # Friends to potentially share with (only for owner)
+    share_friends = []
+    shared_with = []
+    if is_owner:
+        friends_rows = db.execute(
+            """SELECT u.id, u.username FROM friendships f
+               JOIN users u ON u.id=CASE WHEN f.requester_id=? THEN f.receiver_id ELSE f.requester_id END
+               WHERE (f.requester_id=? OR f.receiver_id=?) AND f.status='accepted'
+               ORDER BY u.username""",
+            (uid, uid, uid)
+        ).fetchall()
+        already_shared_ids = {
+            r['shared_with_id'] for r in
+            db.execute('SELECT shared_with_id FROM tree_shares WHERE tree_id=?', (tree_id,)).fetchall()
+        }
+        share_friends = [dict(f) for f in friends_rows if f['id'] not in already_shared_ids]
+        shared_with = [dict(r) for r in db.execute(
+            '''SELECT u.id, u.username FROM tree_shares ts
+               JOIN users u ON u.id=ts.shared_with_id
+               WHERE ts.tree_id=? ORDER BY u.username''', (tree_id,)
+        ).fetchall()]
+
+    return render_template('family_tree.html',
+                           tree=dict(tree),
+                           my_cats=my_cats,
+                           friend_cats=friend_cats,
+                           relations=relations,
+                           cat_names=cat_names,
+                           rel_labels=rel_labels,
+                           current_user_id=uid,
+                           is_owner=is_owner,
+                           share_friends=share_friends,
+                           shared_with=shared_with)
+
+
+@app.route('/family-tree/<int:tree_id>/share', methods=['POST'])
+@login_required
+def family_tree_share(tree_id):
+    db = get_db()
+    uid = session['user_id']
+    tree = db.execute('SELECT 1 FROM family_trees WHERE id=? AND owner_id=?', (tree_id, uid)).fetchone()
+    if not tree:
+        return redirect(url_for('family_tree'))
+    friend_id = request.form.get('friend_id', type=int)
+    if friend_id:
+        # Verify they are friends
+        is_friend = db.execute(
+            """SELECT 1 FROM friendships
+               WHERE ((requester_id=? AND receiver_id=?) OR (requester_id=? AND receiver_id=?))
+               AND status='accepted'""",
+            (uid, friend_id, friend_id, uid)
+        ).fetchone()
+        if is_friend:
+            db.execute('INSERT OR IGNORE INTO tree_shares (tree_id, shared_with_id) VALUES (?,?)',
+                       (tree_id, friend_id))
+            db.commit()
+            push_notification(db, friend_id, 'tree_share', from_user_id=uid, tree_id=tree_id)
+    return redirect(url_for('family_tree_view', tree_id=tree_id) + '#share')
+
+
+@app.route('/family-tree/<int:tree_id>/unshare/<int:friend_id>', methods=['POST'])
+@login_required
+def family_tree_unshare(tree_id, friend_id):
+    db = get_db()
+    uid = session['user_id']
+    tree = db.execute('SELECT 1 FROM family_trees WHERE id=? AND owner_id=?', (tree_id, uid)).fetchone()
+    if tree:
+        db.execute('DELETE FROM tree_shares WHERE tree_id=? AND shared_with_id=?', (tree_id, friend_id))
+        db.commit()
+    return redirect(url_for('family_tree_view', tree_id=tree_id) + '#share')
+
+
+@app.route('/relation/add', methods=['POST'])
+@login_required
+def relation_add():
+    cat_id    = request.form.get('cat_id', type=int)
+    related_id = request.form.get('related_cat_id', type=int)
+    relation  = request.form.get('relation', '').strip()
+    tree_id   = request.form.get('tree_id', type=int)
+    uid = session['user_id']
+    db = get_db()
+
+    if not cat_id or not related_id or cat_id == related_id or not tree_id:
+        return jsonify({'error': 'invalid'}), 400
+    if relation not in ('father', 'mother', 'sibling', 'child'):
+        return jsonify({'error': 'invalid relation'}), 400
+    if not db.execute('SELECT 1 FROM family_trees WHERE id=? AND owner_id=?',
+                      (tree_id, uid)).fetchone():
+        return jsonify({'error': 'access denied'}), 403
+
+    accessible = {r['id'] for r in db.execute('SELECT id FROM cats WHERE user_id=?', (uid,)).fetchall()}
+    for fr in db.execute(
+        """SELECT u.id FROM friendships f
+           JOIN users u ON u.id=CASE WHEN f.requester_id=? THEN f.receiver_id ELSE f.requester_id END
+           WHERE (f.requester_id=? OR f.receiver_id=?) AND f.status='accepted'""",
+        (uid, uid, uid)
+    ).fetchall():
+        for r in db.execute('SELECT id FROM cats WHERE user_id=?', (fr['id'],)).fetchall():
+            accessible.add(r['id'])
+
+    if cat_id not in accessible or related_id not in accessible:
+        return jsonify({'error': 'access denied'}), 403
+
+    try:
+        db.execute(
+            'INSERT OR IGNORE INTO cat_relations (cat_id, related_cat_id, relation, created_by, tree_id) VALUES (?,?,?,?,?)',
+            (cat_id, related_id, relation, uid, tree_id))
+        if relation == 'sibling':
+            db.execute(
+                'INSERT OR IGNORE INTO cat_relations (cat_id, related_cat_id, relation, created_by, tree_id) VALUES (?,?,?,?,?)',
+                (related_id, cat_id, 'sibling', uid, tree_id))
+        db.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/relation/<int:rel_id>/delete', methods=['POST'])
+@login_required
+def relation_delete(rel_id):
+    db = get_db()
+    uid = session['user_id']
+    row = db.execute('SELECT * FROM cat_relations WHERE id=?', (rel_id,)).fetchone()
+    tree_id = row['tree_id'] if row else None
+    if row and row['created_by'] == uid:
+        db.execute('DELETE FROM cat_relations WHERE id=?', (rel_id,))
+        if row['relation'] == 'sibling':
+            db.execute(
+                "DELETE FROM cat_relations WHERE cat_id=? AND related_cat_id=? AND relation='sibling' AND tree_id=?",
+                (row['related_cat_id'], row['cat_id'], tree_id))
+        db.commit()
+    return redirect(url_for('family_tree_view', tree_id=tree_id) if tree_id else url_for('family_tree'))
+
+
+
+# ═══════════════════════════════════════════════════════════════
+#  ADMIN
+# ═══════════════════════════════════════════════════════════════
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('is_admin'):
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route('/admin', methods=['GET', 'POST'])
+def admin_login():
+    if session.get('is_admin'):
+        return redirect(url_for('admin_dashboard'))
+    error = None
+    if request.method == 'POST':
+        u = request.form.get('username', '')
+        p = request.form.get('password', '')
+        s = request.form.get('secret', '')
+        if ADMIN_SECRET and u == ADMIN_USERNAME and p == ADMIN_PASSWORD and s == ADMIN_SECRET:
+            session['is_admin'] = True
+            return redirect(url_for('admin_dashboard'))
+        error = 'פרטים שגויים'
+    return render_template('admin_login.html', error=error)
+
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('is_admin', None)
+    return redirect(url_for('admin_login'))
+
+
+@app.route('/admin/dashboard')
+@admin_required
+def admin_dashboard():
+    db = get_db()
+    users = db.execute('''
+        SELECT u.id, u.username,
+               COUNT(DISTINCT c.id)  as cat_count,
+               COUNT(DISTINCT po.id) as post_count,
+               COUNT(DISTINCT f.id)  as friend_count
+        FROM users u
+        LEFT JOIN cats c  ON c.user_id  = u.id
+        LEFT JOIN posts po ON po.user_id = u.id
+        LEFT JOIN friendships f ON (f.requester_id=u.id OR f.receiver_id=u.id) AND f.status='accepted'
+        GROUP BY u.id ORDER BY u.id
+    ''').fetchall()
+
+    friendships = db.execute('''
+        SELECT f.id, u1.username as user1, u2.username as user2, f.status, f.created_at
+        FROM friendships f
+        JOIN users u1 ON u1.id = f.requester_id
+        JOIN users u2 ON u2.id = f.receiver_id
+        ORDER BY f.status, u1.username
+    ''').fetchall()
+
+    posts = db.execute('''
+        SELECT p.id, p.caption, p.photo, p.created_at, u.username,
+               COUNT(pc.id) as comment_count
+        FROM posts p
+        JOIN users u ON u.id = p.user_id
+        LEFT JOIN post_comments pc ON pc.post_id = p.id
+        GROUP BY p.id ORDER BY p.created_at DESC LIMIT 100
+    ''').fetchall()
+
+    logs = db.execute('''
+        SELECT username, user_id, success, ip, logged_at
+        FROM login_logs ORDER BY logged_at DESC LIMIT 200
+    ''').fetchall()
+
+    return render_template('admin_dashboard.html',
+                           users=users,
+                           friendships=friendships,
+                           posts=posts,
+                           logs=logs)
+
+
+@app.route('/admin/user/<int:uid>/reset', methods=['POST'])
+@admin_required
+def admin_reset_password(uid):
+    import secrets
+    temp_pw = secrets.token_urlsafe(8)
+    db = get_db()
+    user = db.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    db.execute('UPDATE users SET password=? WHERE id=?',
+               (generate_password_hash(temp_pw), uid))
+    db.commit()
+    flash(f'סיסמה זמנית למשתמש "{user["username"]}": {temp_pw}', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#users')
+
+
+@app.route('/admin/user/<int:uid>/delete', methods=['POST'])
+@admin_required
+def admin_delete_user(uid):
+    db = get_db()
+    user = db.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    if not user:
+        return redirect(url_for('admin_dashboard'))
+    # Delete files
+    for row in db.execute(
+            'SELECT cp.filename FROM cat_photos cp JOIN cats c ON c.id=cp.cat_id WHERE c.user_id=?', (uid,)):
+        local_delete(row['filename'])
+    for row in db.execute('SELECT photo FROM posts WHERE user_id=? AND photo IS NOT NULL', (uid,)):
+        local_delete(row['photo'])
+    # Delete DB rows
+    db.execute('DELETE FROM post_comments WHERE user_id=?', (uid,))
+    db.execute('DELETE FROM post_saves WHERE user_id=?', (uid,))
+    db.execute('DELETE FROM posts WHERE user_id=?', (uid,))
+    db.execute('DELETE FROM cat_relations WHERE created_by=?', (uid,))
+    db.execute('DELETE FROM family_trees WHERE owner_id=?', (uid,))
+    db.execute('DELETE FROM notifications WHERE user_id=? OR from_user_id=?', (uid, uid))
+    db.execute('DELETE FROM messages WHERE sender_id=? OR receiver_id=?', (uid, uid))
+    db.execute('DELETE FROM friendships WHERE requester_id=? OR receiver_id=?', (uid, uid))
+    db.execute('DELETE FROM cat_photos WHERE cat_id IN (SELECT id FROM cats WHERE user_id=?)', (uid,))
+    db.execute('DELETE FROM cat_details WHERE cat_id IN (SELECT id FROM cats WHERE user_id=?)', (uid,))
+    db.execute('DELETE FROM cats WHERE user_id=?', (uid,))
+    db.execute('DELETE FROM users WHERE id=?', (uid,))
+    db.commit()
+    flash(f'משתמש "{user["username"]}" נמחק', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#users')
+
+
+@app.route('/admin/post/<int:post_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_post(post_id):
+    db = get_db()
+    post = db.execute('SELECT * FROM posts WHERE id=?', (post_id,)).fetchone()
+    if post:
+        if post['photo']:
+            local_delete(post['photo'])
+        db.execute('DELETE FROM post_comments WHERE post_id=?', (post_id,))
+        db.execute('DELETE FROM post_saves WHERE post_id=?', (post_id,))
+        db.execute('DELETE FROM posts WHERE id=?', (post_id,))
+        db.commit()
+    return redirect(url_for('admin_dashboard') + '#posts')
+
+
+@app.route('/admin/friendship/<int:fid>/delete', methods=['POST'])
+@admin_required
+def admin_delete_friendship(fid):
+    db = get_db()
+    db.execute('DELETE FROM friendships WHERE id=?', (fid,))
+    db.commit()
+    return redirect(url_for('admin_dashboard') + '#friends')
+
+
+init_db()
+
 if __name__ == '__main__':
-    init_db()
-    app.run(debug=True, port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5001)

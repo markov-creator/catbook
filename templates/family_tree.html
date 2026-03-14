@@ -1,0 +1,551 @@
+{% extends 'base.html' %}
+{% block title %}{{ tree.name }}{% endblock %}
+{% block content %}
+<div style="margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+  <a href="{{ url_for('family_tree') }}" style="color:#6a0dad;font-weight:bold;text-decoration:none;">← כל העצים</a>
+  <span style="font-size:1.2rem;font-weight:bold;color:#3d006e;">🐱🌳 {{ tree.name }}</span>
+  {% if is_owner %}
+  <form method="post" action="{{ url_for('family_tree_rename', tree_id=tree.id) }}"
+        style="display:flex;gap:6px;margin-right:auto;">
+    <input name="name" placeholder="שנה שם..." maxlength="60"
+           style="padding:5px 10px;border-radius:8px;border:1.5px solid #c9a0e8;font-family:'Rubik',sans-serif;font-size:.85rem;width:160px;">
+    <button type="submit"
+            style="padding:5px 12px;background:#e8d5f7;color:#6a0dad;border:none;border-radius:8px;cursor:pointer;font-family:'Rubik',sans-serif;font-weight:bold;">שמור</button>
+  </form>
+  {% else %}
+  <span style="margin-right:auto;font-size:.82rem;color:#888;background:#f3e8ff;padding:4px 10px;border-radius:8px;">👁️ צפייה בלבד</span>
+  {% endif %}
+</div>
+<style>
+  #tree-page { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; min-height: 80vh; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 280px; min-width: 240px;
+    background: #fff; border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(100,0,150,.1);
+    padding: 18px; flex-shrink: 0;
+  }
+  #sidebar h3 { color: #6a0dad; margin-bottom: 12px; font-size: 1rem; }
+  #sidebar select, #sidebar button {
+    width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1.5px solid #c9a0e8; font-size: .9rem; margin-bottom: 8px;
+    font-family: 'Rubik', sans-serif;
+  }
+  #sidebar select { background: #faf5ff; color: #333; }
+  #sidebar button.add-btn {
+    background: #6a0dad; color: #fff; border: none;
+    cursor: pointer; font-weight: 800; font-size: .95rem;
+    font-family: 'Rubik', sans-serif;
+  }
+  #sidebar button.add-btn:hover { background: #8b2be2; }
+  .rel-label { font-size: .8rem; color: #888; margin-bottom: 2px; }
+
+  /* ── Relations list ── */
+  #rel-list { margin-top: 16px; }
+  #rel-list h3 { color: #6a0dad; margin-bottom: 8px; font-size: 1rem; }
+  .rel-item {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: .82rem; padding: 5px 8px; border-radius: 8px;
+    background: #f8f0ff; margin-bottom: 4px; gap: 6px;
+  }
+  .rel-item .del-btn {
+    background: none; border: none; cursor: pointer;
+    color: #c00; font-size: 1rem; padding: 0 4px; flex-shrink: 0;
+  }
+
+  /* ── Tree canvas area ── */
+  #tree-wrap {
+    flex: 1; min-width: 600px; min-height: 75vh;
+    background: #fff; border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(100,0,150,.1);
+    padding: 24px; overflow: auto; position: relative;
+  }
+  #tree-wrap h2 { color: #6a0dad; margin-bottom: 12px; font-size: 1.1rem; text-align: center; }
+
+  #tree-container {
+    position: relative;
+    min-height: 300px;
+  }
+  svg#tree-svg {
+    position: absolute; top: 0; left: 0;
+    pointer-events: none; overflow: visible;
+  }
+
+  /* ── Cat node ── */
+  .cat-node {
+    position: absolute;
+    width: 110px;
+    text-align: center;
+    cursor: default;
+    z-index: 2;
+  }
+  .cat-node .avatar {
+    width: 70px; height: 70px; border-radius: 50%;
+    object-fit: cover; display: block; margin: 0 auto 4px;
+    border: 3px solid #6a0dad;
+  }
+  .cat-node.friend .avatar { border-color: #b44fd4; }
+  .cat-node .cat-name {
+    font-size: .82rem; font-weight: bold; color: #3d006e;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cat-node .owner-name {
+    font-size: .72rem; color: #888;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cat-node.isolated { opacity: .6; }
+
+  .empty-tree {
+    text-align: center; color: #aaa; padding: 60px 20px; font-size: .95rem;
+  }
+
+  /* Legend */
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; justify-content: center; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: .8rem; color: #555; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; }
+</style>
+
+<div id="tree-page">
+
+  <!-- Sidebar: add relation -->
+  <div id="sidebar">
+    {% if is_owner %}
+    <h3>➕ הוסף קשר</h3>
+
+    <div class="rel-label">חתול:</div>
+    <select id="sel-cat">
+      <option value="">-- בחר חתול --</option>
+      {% for c in my_cats %}
+        <option value="{{ c.id }}" data-mine="1">{{ c.name }} (שלי)</option>
+      {% endfor %}
+      {% for c in friend_cats %}
+        <option value="{{ c.id }}" data-mine="0">{{ c.name }} (של {{ c.owner }})</option>
+      {% endfor %}
+    </select>
+
+    <div class="rel-label">הקשר שלו/שלה:</div>
+    <select id="sel-rel">
+      <option value="father">האבא שלו/שלה הוא ←</option>
+      <option value="mother">האמא שלו/שלה היא ←</option>
+      <option value="child">אחד הילדים שלו/שלה הוא ←</option>
+      <option value="sibling">אח/אחות שלו/שלה הוא ←</option>
+    </select>
+
+    <div class="rel-label">חתול שני (ממלא את התפקיד):</div>
+    <select id="sel-related">
+      <option value="">-- בחר חתול --</option>
+      {% for c in my_cats %}
+        <option value="{{ c.id }}">{{ c.name }} (שלי)</option>
+      {% endfor %}
+      {% for c in friend_cats %}
+        <option value="{{ c.id }}">{{ c.name }} (של {{ c.owner }})</option>
+      {% endfor %}
+    </select>
+
+    <button class="add-btn" onclick="addRelation()">הוסף קשר</button>
+    {% endif %}
+
+    <!-- Relations list -->
+    <div id="rel-list">
+      <h3>📋 קשרים קיימים</h3>
+      <div id="rel-items">
+        {% if not relations %}
+          <div style="color:#aaa;font-size:.82rem;">אין קשרים עדיין</div>
+        {% endif %}
+        {% for r in relations %}
+          <div class="rel-item" id="rel-{{ r.id }}">
+            <span>
+              {{ cat_names[r.cat_id] }}
+              <b>{{ rel_labels[r.relation] }}</b>
+              {{ cat_names[r.related_cat_id] }}
+            </span>
+            {% if is_owner and r.created_by == current_user_id %}
+            <form method="post" action="{{ url_for('relation_delete', rel_id=r.id) }}" style="margin:0">
+              <button class="del-btn" title="מחק">✕</button>
+            </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if is_owner %}
+    <!-- Share panel -->
+    <div id="share-panel" style="margin-top:20px;border-top:1.5px solid #f0e8ff;padding-top:14px;">
+      <h3>🔗 שיתוף העץ</h3>
+      {% if share_friends %}
+      <form method="post" action="{{ url_for('family_tree_share', tree_id=tree.id) }}"
+            style="display:flex;gap:6px;flex-direction:column;">
+        <select name="friend_id" style="width:100%;padding:7px 10px;border-radius:8px;border:1.5px solid #c9a0e8;font-family:'Rubik',sans-serif;font-size:.85rem;">
+          <option value="">-- בחר חבר לשתף --</option>
+          {% for f in share_friends %}
+            <option value="{{ f.id }}">{{ f.username }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit"
+                style="padding:7px 12px;background:#6a0dad;color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:'Rubik',sans-serif;font-weight:bold;font-size:.88rem;">שתף</button>
+      </form>
+      {% else %}
+        <div style="color:#aaa;font-size:.8rem;margin-bottom:8px;">אין חברים נוספים לשתף</div>
+      {% endif %}
+      {% if shared_with %}
+      <div style="margin-top:10px;">
+        <div style="font-size:.8rem;color:#888;margin-bottom:6px;">משותף עם:</div>
+        {% for u in shared_with %}
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+          <span style="font-size:.85rem;">{{ u.username }}</span>
+          <form method="post" action="{{ url_for('family_tree_unshare', tree_id=tree.id, friend_id=u.id) }}" style="margin:0">
+            <button type="submit" style="background:none;border:none;cursor:pointer;color:#c00;font-size:.8rem;padding:2px 6px;">הסר</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Tree visualization -->
+  <div id="tree-wrap">
+    <h2>🌳 עץ המשפחה</h2>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#6a0dad"></div> החתולים שלי</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#b44fd4"></div> חתולים של חברים</div>
+      <div class="legend-item">
+        <svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" stroke="#6a0dad" stroke-width="2"/></svg>
+        הורה-ילד
+      </div>
+      <div class="legend-item">
+        <svg width="30" height="10"><line x1="0" y1="5" x2="30" y2="5" stroke="#b44fd4" stroke-width="2" stroke-dasharray="4,3"/></svg>
+        אחים
+      </div>
+    </div>
+    <div id="tree-container">
+      <svg id="tree-svg"></svg>
+      <div id="tree-nodes"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Data from server ──────────────────────────────────────────────────────────
+const MY_CATS = {{ my_cats | tojson }};
+const FRIEND_CATS = {{ friend_cats | tojson }};
+const RELATIONS = {{ relations | tojson }};
+const TREE_ID = {{ tree.id }};
+
+const REL_LABELS = {father:'אבא של', mother:'אמא של', child:'ילד/ה של', sibling:'אח/אחות של'};
+
+// Build cat map
+const catMap = {};
+MY_CATS.forEach(c => catMap[c.id] = {...c, is_mine: true});
+FRIEND_CATS.forEach(c => catMap[c.id] = {...c, is_mine: false});
+
+// ── Layout algorithm ──────────────────────────────────────────────────────────
+function computeLayout() {
+  const N_W = 120, N_H = 110, H_GAP = 20, V_GAP = 80;
+
+  // Only include cats that appear in at least one relation
+  const connectedIds = new Set();
+  RELATIONS.forEach(r => { connectedIds.add(r.cat_id); connectedIds.add(r.related_cat_id); });
+  const allIds = Array.from(connectedIds);
+  if (!allIds.length) return {};
+
+  // Build parent→children map (father/mother/child relations)
+  const childrenOf = {}; // parentId → [childId]
+  const parentsOf  = {}; // childId  → [parentId]
+  const siblingOf  = {}; // catId    → [siblingId]
+
+  RELATIONS.forEach(r => {
+    const {cat_id: a, related_cat_id: b, relation: rel} = r;
+    // Semantics: cat_id (a) is the CAT being described,
+    //            related_cat_id (b) plays the role for a.
+    // "father/mother" → b IS the parent of a
+    // "child"         → b IS the child  of a
+    // "sibling"       → a and b are siblings
+    if (rel === 'father' || rel === 'mother') {
+      // b is parent of a
+      childrenOf[b] = childrenOf[b] || [];
+      if (!childrenOf[b].includes(a)) childrenOf[b].push(a);
+      parentsOf[a] = parentsOf[a] || [];
+      if (!parentsOf[a].includes(b)) parentsOf[a].push(b);
+    } else if (rel === 'child') {
+      // b is child of a  →  a is parent of b
+      childrenOf[a] = childrenOf[a] || [];
+      if (!childrenOf[a].includes(b)) childrenOf[a].push(b);
+      parentsOf[b] = parentsOf[b] || [];
+      if (!parentsOf[b].includes(a)) parentsOf[b].push(a);
+    } else if (rel === 'sibling') {
+      siblingOf[a] = siblingOf[a] || [];
+      if (!siblingOf[a].includes(b)) siblingOf[a].push(b);
+    }
+  });
+
+  // Assign generation via BFS
+  const gen = {};
+  const roots = allIds.filter(id => !parentsOf[id]);
+  const queue = roots.map(id => [id, 0]);
+  const visited = new Set();
+  while (queue.length) {
+    const [id, g] = queue.shift();
+    if (visited.has(id)) continue;
+    visited.add(id); gen[id] = g;
+    (childrenOf[id] || []).forEach(cid => queue.push([cid, g + 1]));
+  }
+  // Unvisited cats: default gen = 1
+  allIds.forEach(id => { if (gen[id] === undefined) gen[id] = 1; });
+
+  // Sibling alignment: if A has a real parent (gen determined by BFS)
+  // and B is A's sibling with no parent, B should go to the same row as A.
+  // Run 3 passes to propagate through sibling chains.
+  for (let pass = 0; pass < 3; pass++) {
+    RELATIONS.forEach(r => {
+      if (r.relation !== 'sibling') return;
+      const a = r.cat_id, b = r.related_cat_id;
+      if (gen[a] === undefined || gen[b] === undefined) return;
+      const aHasParent = !!(parentsOf[a] && parentsOf[a].length);
+      const bHasParent = !!(parentsOf[b] && parentsOf[b].length);
+      if (aHasParent && !bHasParent) {
+        gen[b] = gen[a];
+      } else if (bHasParent && !aHasParent) {
+        gen[a] = gen[b];
+      }
+    });
+  }
+
+  // Group by generation
+  const groups = {};
+  allIds.forEach(id => {
+    const g = gen[id];
+    groups[g] = groups[g] || [];
+    groups[g].push(id);
+  });
+
+  // Assign x/y positions (centered per generation)
+  const maxGen = Math.max(...Object.keys(groups).map(Number));
+  const maxCount = Math.max(...Object.values(groups).map(g => g.length));
+  const totalW = maxCount * (N_W + H_GAP) - H_GAP;
+
+  const positions = {};
+  Object.entries(groups).forEach(([g, ids]) => {
+    const rowW = ids.length * (N_W + H_GAP) - H_GAP;
+    const startX = (totalW - rowW) / 2;
+    ids.forEach((id, i) => {
+      positions[id] = {
+        x: startX + i * (N_W + H_GAP),
+        y: parseInt(g) * (N_H + V_GAP)
+      };
+    });
+  });
+
+  return {positions, childrenOf, parentsOf, siblingOf, N_W, N_H, maxGen};
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render() {
+  const nodesDiv = document.getElementById('tree-nodes');
+  const svg = document.getElementById('tree-svg');
+  nodesDiv.innerHTML = '';
+  svg.innerHTML = '';
+
+  const connectedIds = new Set();
+  RELATIONS.forEach(r => { connectedIds.add(r.cat_id); connectedIds.add(r.related_cat_id); });
+  const allIds = Array.from(connectedIds);
+  if (!allIds.length) {
+    nodesDiv.innerHTML = '<div class="empty-tree">אין קשרים עדיין.<br>בחר שני חתולים ולחץ "הוסף קשר" כדי להתחיל.</div>';
+    document.getElementById('tree-container').style.minHeight = '200px';
+    return;
+  }
+
+  const layout = computeLayout();
+  if (!layout.positions) return;
+  const {positions, childrenOf, parentsOf, siblingOf, N_W, N_H} = layout;
+
+  // Canvas size
+  const xs = Object.values(positions).map(p => p.x);
+  const ys = Object.values(positions).map(p => p.y);
+  const W = Math.max(...xs) + N_W + 20;
+  const H = Math.max(...ys) + N_H + 20;
+
+  document.getElementById('tree-container').style.width  = W + 'px';
+  document.getElementById('tree-container').style.height = H + 'px';
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+
+  function ln(x1,y1,x2,y2,color,dashed) {
+    const l = document.createElementNS('http://www.w3.org/2000/svg','line');
+    l.setAttribute('x1',x1); l.setAttribute('y1',y1);
+    l.setAttribute('x2',x2); l.setAttribute('y2',y2);
+    l.setAttribute('stroke',color); l.setAttribute('stroke-width','2');
+    if (dashed) l.setAttribute('stroke-dasharray','6,4');
+    svg.appendChild(l);
+  }
+
+  // ── Build parent→children map (merge all relations) ──────────────────────────
+  // parentChildren[parentId] = Set of child ids
+  const parentChildren = {};
+  RELATIONS.forEach(r => {
+    const {cat_id: a, related_cat_id: b, relation: rel} = r;
+    let parentId, childId;
+    if (rel === 'father' || rel === 'mother') { parentId = b; childId = a; }
+    else if (rel === 'child')                  { parentId = a; childId = b; }
+    else return;
+    parentChildren[parentId] = parentChildren[parentId] || new Set();
+    parentChildren[parentId].add(childId);
+  });
+
+  // ── Find sibling connected components (union-find) ───────────────────────────
+  const uf = {};
+  const ufFind = id => { if (uf[id] === undefined || uf[id] === id) return id;
+                          return (uf[id] = ufFind(uf[id])); };
+  const ufUnion = (a, b) => { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) uf[ra] = rb; };
+  allIds.forEach(id => { uf[id] = id; });
+  RELATIONS.forEach(r => { if (r.relation === 'sibling') ufUnion(r.cat_id, r.related_cat_id); });
+
+  // Group cats by sibling component
+  const sibComponents = {};
+  allIds.forEach(id => {
+    const root = ufFind(id);
+    sibComponents[root] = sibComponents[root] || [];
+    sibComponents[root].push(id);
+  });
+
+  // ── Build family groups: per sibling group, collect all their parents ─────────
+  const familyGroups = {};
+  Object.values(sibComponents).forEach(siblings => {
+    const parents = new Set();
+    siblings.forEach(sibId => {
+      RELATIONS.forEach(r => {
+        if (r.cat_id === sibId && (r.relation === 'father' || r.relation === 'mother'))
+          parents.add(r.related_cat_id);
+        if (r.related_cat_id === sibId && r.relation === 'child')
+          parents.add(r.cat_id);
+      });
+    });
+    if (!parents.size) return;
+    const key = [...parents].sort().join(',');
+    if (!familyGroups[key]) familyGroups[key] = { parents: [...parents], children: new Set() };
+    siblings.forEach(s => familyGroups[key].children.add(s));
+  });
+
+  // ── Draw each family group ────────────────────────────────────────────────────
+  Object.values(familyGroups).forEach(({parents, children}) => {
+    const childArr  = Array.from(children).filter(id => positions[id]);
+    const parentArr = parents.filter(id => positions[id]);
+    if (!parentArr.length || !childArr.length) return;
+
+    const parentXs    = parentArr.map(id => positions[id].x + N_W/2);
+    const parentY_mid = parentArr[0].y !== undefined
+                        ? parentArr.map(id => positions[id].y + N_H/2)
+                        : [positions[parentArr[0]].y + N_H/2];
+    const parentCY    = positions[parentArr[0]].y + N_H/2;
+    const parentBotY  = positions[parentArr[0]].y + N_H;
+    const minPX = Math.min(...parentXs), maxPX = Math.max(...parentXs);
+    const midPX = Math.round((minPX + maxPX) / 2);
+
+    const childXs   = childArr.map(id => positions[id].x + N_W/2);
+    const childTopY = positions[childArr[0]].y;
+    const minCX = Math.min(...childXs), maxCX = Math.max(...childXs);
+
+    const junctionY = Math.round((parentBotY + childTopY) / 2);
+
+    // 1. Horizontal line connecting parents (if 2+)
+    if (parentArr.length > 1) {
+      ln(minPX, parentCY, maxPX, parentCY, '#6a0dad', false);
+    }
+
+    // 2. Vertical line from parent(s) midpoint down to junction
+    ln(midPX, parentBotY, midPX, junctionY, '#6a0dad', false);
+
+    // 3. Horizontal branch at junction spanning all children + midPX
+    const branchMinX = Math.min(midPX, minCX);
+    const branchMaxX = Math.max(midPX, maxCX);
+    if (branchMinX < branchMaxX)
+      ln(branchMinX, junctionY, branchMaxX, junctionY, '#6a0dad', false);
+
+    // 4. Vertical lines from junction down to each child
+    childArr.forEach(id => {
+      const cx = positions[id].x + N_W/2;
+      ln(cx, junctionY, cx, positions[id].y, '#6a0dad', false);
+    });
+  });
+
+  // ── Sibling dashed lines ──────────────────────────────────────────────────────
+  const drawnSiblings = new Set();
+  RELATIONS.forEach(r => {
+    if (r.relation !== 'sibling') return;
+    const {cat_id: a, related_cat_id: b} = r;
+    const key = [Math.min(a,b), Math.max(a,b)].join('-');
+    if (drawnSiblings.has(key)) return;
+    drawnSiblings.add(key);
+    const pa = positions[a], pb = positions[b];
+    if (!pa || !pb) return;
+    ln(pa.x+N_W/2, pa.y+N_H/2, pb.x+N_W/2, pb.y+N_H/2, '#b44fd4', true);
+  });
+
+  // Draw nodes
+  allIds.forEach(id => {
+    const pos = positions[id];
+    if (!pos) return;
+    const cat = catMap[id];
+    const node = document.createElement('div');
+    node.className = 'cat-node' + (cat.is_mine ? '' : ' friend');
+    node.style.left = pos.x + 'px';
+    node.style.top  = pos.y + 'px';
+    node.style.width = N_W + 'px';
+
+    const img = cat.photo
+      ? `/static/uploads/${cat.photo}`
+      : `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'><rect width='80' height='80' rx='40' fill='%23e8d5f7'/><text x='50%25' y='55%25' text-anchor='middle' dominant-baseline='middle' font-size='36'>🐱</text></svg>`;
+
+    node.innerHTML = `
+      <img class="avatar" src="${img}" alt="${cat.name}" onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 80 80\\'><rect width=\\'80\\' height=\\'80\\' rx=\\'40\\' fill=\\'%23e8d5f7\\'/><text x=\\'50%25\\' y=\\'55%25\\' text-anchor=\\'middle\\' dominant-baseline=\\'middle\\' font-size=\\'36\\'>🐱</text></svg>'">
+      <div class="cat-name">${cat.name}</div>
+      ${cat.is_mine ? '' : `<div class="owner-name">של ${cat.owner}</div>`}
+    `;
+    nodesDiv.appendChild(node);
+  });
+}
+
+function drawEdge(svg, x1, y1, x2, y2, color, dashed) {
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+  line.setAttribute('stroke', color);
+  line.setAttribute('stroke-width', '2');
+  if (dashed) line.setAttribute('stroke-dasharray', '6,4');
+  svg.appendChild(line);
+}
+
+// ── Add relation via AJAX ─────────────────────────────────────────────────────
+function addRelation() {
+  const catId     = document.getElementById('sel-cat').value;
+  const relatedId = document.getElementById('sel-related').value;
+  const relation  = document.getElementById('sel-rel').value;
+
+  if (!catId || !relatedId) { alert('בחר שני חתולים'); return; }
+  if (catId === relatedId)  { alert('אותו חתול לא יכול להיות קשור לעצמו'); return; }
+
+  const fd = new FormData();
+  fd.append('cat_id', catId);
+  fd.append('related_cat_id', relatedId);
+  fd.append('relation', relation);
+  fd.append('tree_id', TREE_ID);
+
+  fetch('/relation/add', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) {
+        location.reload();
+      } else {
+        alert('שגיאה: ' + (data.error || 'לא ידועה'));
+      }
+    });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+render();
+</script>
+{% endblock %}

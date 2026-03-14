@@ -49,6 +49,15 @@
           המשתמש <strong>{{ n.from_username }}</strong> העלה תמונה שדומה לחתול שלך
           {% if n.cat_name %}<strong>"{{ n.cat_name }}"</strong>{% endif %}
         </div>
+      {% elif n.type == 'tree_share' %}
+        <div class="notif-text">
+          🐈🌳 המשתמש <strong>{{ n.from_username }}</strong> שיתף איתך את עץ המשפחה
+          {% if n.tree_name %}<strong>"{{ n.tree_name }}"</strong>{% endif %}
+          {% if n.tree_id %}
+            — <a href="{{ url_for('family_tree_view', tree_id=n.tree_id) }}"
+                 style="color:var(--purple);font-weight:700;">פתח עץ</a>
+          {% endif %}
+        </div>
       {% endif %}
       <div class="notif-time">{{ n.created_at }}</div>
     </div>
