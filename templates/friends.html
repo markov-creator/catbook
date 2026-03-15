@@ -8,7 +8,7 @@
 {% if found_cat_notice %}
 <div class="found-cat-notice">
   {% if found_cat_notice.photo %}
-  <img src="{{ url_for('static', filename='uploads/' + found_cat_notice.photo) }}" alt="תמונה שזוהתה" class="found-cat-photo">
+  <img src="{{ photo_url(found_cat_notice.photo) }}" alt="תמונה שזוהתה" class="found-cat-photo">
   {% endif %}
   <div class="found-cat-text">
     {% if found_cat_notice.context_type == 'similar' %}
@@ -92,10 +92,10 @@
       <div class="friend-request-context">
         <div class="friend-request-photos">
           {% if req.context_photo %}
-            <img src="{{ url_for('static', filename='uploads/' + req.context_photo) }}" class="friend-request-photo" title="התמונה שהועלתה">
+            <img src="{{ photo_url(req.context_photo) }}" class="friend-request-photo" title="התמונה שהועלתה">
           {% endif %}
           {% for p in req.cat_photos %}
-            <img src="{{ url_for('static', filename='uploads/' + p) }}" class="friend-request-photo">
+            <img src="{{ photo_url(p) }}" class="friend-request-photo">
           {% endfor %}
         </div>
         <span>

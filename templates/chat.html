@@ -12,7 +12,7 @@
       <div class="chat-bubble {% if msg.sender_id == uid %}chat-bubble--mine{% else %}chat-bubble--theirs{% endif %}">
         {% if msg.content %}<div class="chat-text">{{ msg.content }}</div>{% endif %}
         {% if msg.image %}
-          <img src="{{ url_for('static', filename='uploads/' + msg.image) }}" class="chat-img" alt="תמונה">
+          <img src="{{ photo_url(msg.image) }}" class="chat-img" alt="תמונה">
         {% endif %}
         <div class="chat-time">{{ msg.sent_at[:16].replace('T', ' ') }}</div>
       </div>
@@ -27,35 +27,44 @@
   <button type="button" class="chat-image-preview-remove" onclick="clearImage()">✕ הסר</button>
 </div>
 
-<form id="chat-form" enctype="multipart/form-data">
-  <input type="file" id="chat-image-input" name="image" accept="image/*" style="display:none">
+<form id="chat-form">
+  <input type="hidden" id="chat-image-url" name="image_url" value="">
   <div class="chat-form">
-    <button type="button" class="chat-attach-btn" onclick="document.getElementById('chat-image-input').click()" title="שלח תמונה">📎</button>
+    <button type="button" class="chat-attach-btn" onclick="openChatImageWidget()" title="שלח תמונה">📎</button>
     <input type="text" name="content" placeholder="כתוב הודעה..." autocomplete="off" class="chat-input" id="chat-input">
     <button type="submit" class="btn">שלח</button>
   </div>
 </form>
 
+<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
 <script>
+  const CLOUD_NAME = '{{ CLOUDINARY_CLOUD_NAME }}';
+  const UPLOAD_PRESET = '{{ CLOUDINARY_UPLOAD_PRESET }}';
   const win = document.getElementById('chat-window');
   win.scrollTop = win.scrollHeight;
   document.getElementById('chat-input').focus();
 
   const SEND_URL = '{{ url_for("chat", friend_id=friend.id) }}';
 
-  document.getElementById('chat-image-input').addEventListener('change', function() {
-    const file = this.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-      document.getElementById('chat-preview-img').src = e.target.result;
-      document.getElementById('chat-image-preview').style.display = 'flex';
-    };
-    reader.readAsDataURL(file);
-  });
+  function openChatImageWidget() {
+    cloudinary.openUploadWidget({
+      cloudName: CLOUD_NAME,
+      uploadPreset: UPLOAD_PRESET,
+      sources: ['local', 'camera'],
+      multiple: false,
+      language: 'he'
+    }, function(error, result) {
+      if (!error && result && result.event === 'success') {
+        const url = result.info.secure_url;
+        document.getElementById('chat-image-url').value = url;
+        document.getElementById('chat-preview-img').src = url;
+        document.getElementById('chat-image-preview').style.display = 'flex';
+      }
+    });
+  }
 
   function clearImage() {
-    document.getElementById('chat-image-input').value = '';
+    document.getElementById('chat-image-url').value = '';
     document.getElementById('chat-image-preview').style.display = 'none';
     document.getElementById('chat-preview-img').src = '';
   }
@@ -63,11 +72,10 @@
   document.getElementById('chat-form').addEventListener('submit', async function(e) {
     e.preventDefault();
     const content = document.getElementById('chat-input').value.trim();
-    const imageInput = document.getElementById('chat-image-input');
-    const hasImage = imageInput.files.length > 0;
-    if (!content && !hasImage) return;
+    const imageUrl = document.getElementById('chat-image-url').value;
+    if (!content && !imageUrl) return;
 
-    const localPreview = hasImage ? document.getElementById('chat-preview-img').src : null;
+    const localPreview = imageUrl || null;
     const fd = new FormData(this);
     const btn = this.querySelector('button[type="submit"]');
     btn.disabled = true;
@@ -81,7 +89,6 @@
       const data = await res.json();
       if (!data.success) return;
 
-      // Build bubble
       const empty = document.querySelector('.chat-empty');
       if (empty) empty.remove();
 

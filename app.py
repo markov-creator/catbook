@@ -30,6 +30,19 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', 'demo')
+CLOUDINARY_UPLOAD_PRESET = os.environ.get('CLOUDINARY_UPLOAD_PRESET', 'ml_default')
+
+
+@app.template_global()
+def photo_url(filename):
+    """Return displayable URL — handles Cloudinary URLs and local filenames."""
+    if not filename:
+        return ''
+    if filename.startswith('http'):
+        return filename
+    return url_for('static', filename='uploads/' + filename)
+
 def local_save(pil_img, public_id):
     """Save a PIL image locally, return filename."""
     filename = f'{public_id}.jpg'
@@ -181,8 +194,10 @@ def inject_globals():
             "SELECT COUNT(*) as cnt FROM notifications WHERE user_id=? AND is_read=0",
             (uid,)
         ).fetchone()['cnt']
-        return {'pending_requests': pending, 'unread_messages': unread, 'unread_notifs': unread_notifs}
-    return {'pending_requests': 0, 'unread_messages': 0, 'unread_notifs': 0}
+        return {'pending_requests': pending, 'unread_messages': unread, 'unread_notifs': unread_notifs,
+                'CLOUDINARY_CLOUD_NAME': CLOUDINARY_CLOUD_NAME, 'CLOUDINARY_UPLOAD_PRESET': CLOUDINARY_UPLOAD_PRESET}
+    return {'pending_requests': 0, 'unread_messages': 0, 'unread_notifs': 0,
+            'CLOUDINARY_CLOUD_NAME': CLOUDINARY_CLOUD_NAME, 'CLOUDINARY_UPLOAD_PRESET': CLOUDINARY_UPLOAD_PRESET}
 
 
 def init_db():
@@ -574,6 +589,12 @@ def add_cat():
         db.commit()
 
         all_feats = []
+        # Accept Cloudinary URLs (direct browser upload)
+        for photo_url_val in request.form.getlist('photo_urls'):
+            if photo_url_val:
+                db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
+                           (cat_id, photo_url_val, None))
+        # Also accept legacy file uploads (for backward compatibility)
         for file in request.files.getlist('photos'):
             url, pil_img = save_photo(file, cat_id)
             if url:
@@ -615,6 +636,15 @@ def add_photo(cat_id):
     if not cat:
         return jsonify({'error': 'לא נמצא'}), 404
 
+    # Accept Cloudinary URL (direct browser upload)
+    cloudinary_url = request.form.get('photo_url', '')
+    if cloudinary_url and cloudinary_url.startswith('http'):
+        db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
+                   (cat_id, cloudinary_url, None))
+        db.commit()
+        return jsonify({'success': True, 'filename': cloudinary_url})
+
+    # Legacy file upload
     file = request.files.get('photo')
     url, pil_img = save_photo(file, cat_id)
     if url:
@@ -629,7 +659,6 @@ def add_photo(cat_id):
                    (cat_id, url, feat_json))
         db.commit()
 
-        # Check if the uploaded photo resembles any other user's cat
         if feat:
             similar = find_similar_cat(db, [feat], session['user_id'])
             if similar:
@@ -1326,19 +1355,22 @@ def chat(friend_id):
 
     if request.method == 'POST':
         content = request.form.get('content', '').strip()
-        image_file = request.files.get('image')
-        image_filename = None
-
-        if image_file and image_file.filename:
-            ext = os.path.splitext(image_file.filename)[1].lower()
-            if ext in ALLOWED_EXTENSIONS:
-                try:
-                    img = Image.open(image_file).convert('RGB')
-                    img.thumbnail((1200, 1200), Image.LANCZOS)
-                    public_id = f'msg_{uid}_{os.urandom(8).hex()}'
-                    image_filename = local_save(img, public_id)
-                except Exception as e:
-                    print(f"chat image upload error: {e}")
+        # Accept Cloudinary URL or legacy file upload
+        image_filename = request.form.get('image_url', '') or None
+        if image_filename and not image_filename.startswith('http'):
+            image_filename = None
+        if not image_filename:
+            image_file = request.files.get('image')
+            if image_file and image_file.filename:
+                ext = os.path.splitext(image_file.filename)[1].lower()
+                if ext in ALLOWED_EXTENSIONS:
+                    try:
+                        img = Image.open(image_file).convert('RGB')
+                        img.thumbnail((1200, 1200), Image.LANCZOS)
+                        public_id = f'msg_{uid}_{os.urandom(8).hex()}'
+                        image_filename = local_save(img, public_id)
+                    except Exception as e:
+                        print(f"chat image upload error: {e}")
 
         if content or image_filename:
             db.execute(
@@ -1444,18 +1476,22 @@ def post_create():
     purpose = request.form.get('purpose', 'share')
     if purpose not in ('share', 'adoption'):
         purpose = 'share'
-    file = request.files.get('photo')
-    photo = None
-    if file and file.filename:
-        ext = os.path.splitext(file.filename)[1].lower()
-        if ext in ALLOWED_EXTENSIONS:
-            try:
-                img = Image.open(file).convert('RGB')
-                img.thumbnail((1200, 1200), Image.LANCZOS)
-                public_id = f'post_{uid}_{os.urandom(8).hex()}'
-                photo = local_save(img, public_id)
-            except Exception as e:
-                print(f"post upload error: {e}")
+    # Accept Cloudinary URL or legacy file upload
+    photo = request.form.get('photo_url', '') or None
+    if photo and not photo.startswith('http'):
+        photo = None
+    if not photo:
+        file = request.files.get('photo')
+        if file and file.filename:
+            ext = os.path.splitext(file.filename)[1].lower()
+            if ext in ALLOWED_EXTENSIONS:
+                try:
+                    img = Image.open(file).convert('RGB')
+                    img.thumbnail((1200, 1200), Image.LANCZOS)
+                    public_id = f'post_{uid}_{os.urandom(8).hex()}'
+                    photo = local_save(img, public_id)
+                except Exception as e:
+                    print(f"post upload error: {e}")
     if not photo and not caption:
         flash('נא להוסיף תמונה או כיתוב')
         return redirect(url_for('posts'))

@@ -28,10 +28,10 @@
   <div class="notif-card {% if not n.is_read %}notif-card--unread{% endif %}">
     <div class="notif-photos">
       {% if n.photo %}
-        <img src="{{ url_for('static', filename='uploads/' + n.photo) }}" class="notif-photo">
+        <img src="{{ photo_url(n.photo) }}" class="notif-photo">
       {% endif %}
       {% for p in n.cat_photos %}
-        <img src="{{ url_for('static', filename='uploads/' + p) }}" class="notif-photo">
+        <img src="{{ photo_url(p) }}" class="notif-photo">
       {% endfor %}
     </div>
     <div class="notif-body">

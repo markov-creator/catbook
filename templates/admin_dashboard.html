@@ -163,7 +163,7 @@
       <tr>
         <td>
           {% if p.photo %}
-            <img class="post-thumb" src="/static/uploads/{{ p.photo }}" alt="">
+            <img class="post-thumb" src="{{ photo_url(p.photo) }}" alt="">
           {% else %}—{% endif %}
         </td>
         <td>{{ p.username }}</td>

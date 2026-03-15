@@ -16,18 +16,45 @@
 
     <div class="form-group">
       <label>תמונות של החתול</label>
-      <div class="file-input-wrapper" onclick="document.getElementById('cat-photos').click()">
-        <input type="file" id="cat-photos" name="photos" accept="image/*" multiple>
-        <div class="file-input-label">
-          <span id="photo-label">לחץ לבחירת תמונות</span>
-        </div>
-      </div>
-      <span class="hint">ניתן לבחור מספר תמונות — ככל שיותר תמונות, כך הזיהוי יהיה מדויק יותר</span>
-      <div id="photo-preview"></div>
+      <div id="photo-preview" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem"></div>
+      <div id="photo-urls-container"></div>
+      <button type="button" class="btn btn-secondary" onclick="openCatWidget()">📷 הוסף תמונה</button>
+      <span class="hint" style="display:block;margin-top:0.4rem">ניתן להוסיף מספר תמונות — ככל שיותר תמונות, כך הזיהוי יהיה מדויק יותר</span>
     </div>
 
     <button type="submit" class="btn btn-full">שמור חתול</button>
   </form>
 </div>
+
+<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
+<script>
+const CLOUD_NAME = '{{ CLOUDINARY_CLOUD_NAME }}';
+const UPLOAD_PRESET = '{{ CLOUDINARY_UPLOAD_PRESET }}';
+
+function openCatWidget() {
+  cloudinary.openUploadWidget({
+    cloudName: CLOUD_NAME,
+    uploadPreset: UPLOAD_PRESET,
+    sources: ['local', 'camera'],
+    multiple: false,
+    language: 'he'
+  }, function(error, result) {
+    if (!error && result && result.event === 'success') {
+      const url = result.info.secure_url;
+      // Add hidden input
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'photo_urls';
+      input.value = url;
+      document.getElementById('photo-urls-container').appendChild(input);
+      // Show thumbnail
+      const img = document.createElement('img');
+      img.src = url;
+      img.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px';
+      document.getElementById('photo-preview').appendChild(img);
+    }
+  });
+}
+</script>
 
 {% endblock %}
