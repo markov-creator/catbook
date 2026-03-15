@@ -83,12 +83,13 @@
   <div id="tab-users" class="tab-content active">
     <table>
       <tr>
-        <th>ID</th><th>שם משתמש</th><th>חתולים</th><th>פוסטים</th><th>חברים</th><th>פעולות</th>
+        <th>ID</th><th>שם משתמש</th><th>אימייל</th><th>חתולים</th><th>פוסטים</th><th>חברים</th><th>פעולות</th>
       </tr>
       {% for u in users %}
       <tr>
         <td><span class="badge">{{ u.id }}</span></td>
         <td><strong>{{ u.username }}</strong></td>
+        <td>{{ u.email or '—' }}</td>
         <td>{{ u.cat_count }}</td>
         <td>{{ u.post_count }}</td>
         <td>{{ u.friend_count }}</td>

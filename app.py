@@ -207,7 +207,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL
+                password TEXT NOT NULL,
+                email TEXT
             );
             CREATE TABLE IF NOT EXISTS cats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,6 +225,11 @@ def init_db():
                 FOREIGN KEY (cat_id) REFERENCES cats(id)
             );
         ''')
+        # add email column if missing
+        try:
+            db.execute('ALTER TABLE users ADD COLUMN email TEXT')
+        except Exception:
+            pass
         # add features column if missing
         try:
             db.execute('ALTER TABLE cat_photos ADD COLUMN features TEXT')
@@ -508,13 +514,14 @@ def register():
     if request.method == 'POST':
         username = request.form['username'].strip()
         password = request.form['password']
+        email = request.form.get('email', '').strip() or None
         if not username or not password:
             flash('נא למלא את כל השדות')
         else:
             db = get_db()
             try:
-                db.execute('INSERT INTO users (username, password) VALUES (?, ?)',
-                           (username, generate_password_hash(password)))
+                db.execute('INSERT INTO users (username, password, email) VALUES (?, ?, ?)',
+                           (username, generate_password_hash(password), email))
                 db.commit()
                 flash('נרשמת בהצלחה! כעת תוכל להתחבר')
                 return redirect(url_for('login'))
@@ -1846,7 +1853,7 @@ def admin_logout():
 def admin_dashboard():
     db = get_db()
     users = db.execute('''
-        SELECT u.id, u.username,
+        SELECT u.id, u.username, u.email,
                COUNT(DISTINCT c.id)  as cat_count,
                COUNT(DISTINCT po.id) as post_count,
                COUNT(DISTINCT f.id)  as friend_count
