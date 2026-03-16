@@ -1,7 +1,9 @@
 .env
 catbook.db
 static/uploads/
+static/uploads.zip
 __pycache__/
 *.pyc
+*.onnx
 .venv/
 venv/
