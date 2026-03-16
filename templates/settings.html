@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="auth-container">
+  <h1 class="auth-title">⚙️ הגדרות חשבון</h1>
+  <form method="POST">
+    <div class="form-group">
+      <label for="username">שם משתמש</label>
+      <input type="text" id="username" name="username" required
+             value="{{ user.username }}" dir="auto">
+    </div>
+    <div class="form-group">
+      <label for="email">אימייל</label>
+      <input type="email" id="email" name="email"
+             value="{{ user.email or '' }}" placeholder="example@email.com" dir="ltr">
+    </div>
+    <button type="submit" class="btn btn-full">שמור שינויים</button>
+  </form>
+  <div class="auth-link">
+    <a href="{{ url_for('cats') }}">← חזרה</a>
+  </div>
+</div>
+
+{% endblock %}

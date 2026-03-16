@@ -30,7 +30,7 @@ cd ~/catbook && git pull
 Then click **Reload** in the Web tab.
 
 ## Architecture
-Single-file Flask app (`app.py`) with SQLite. All routes, DB init, and helpers are in `app.py`.
+Single-file Flask app (`app.py`, ~1970 lines) with SQLite. All routes, DB init, and helpers are in `app.py`.
 
 **Request flow:**
 1. `before_request` → `inject_nav_counts()` injects `pending_requests`, `unread_messages`, `unread_notifs` into every template via `g`
@@ -39,6 +39,7 @@ Single-file Flask app (`app.py`) with SQLite. All routes, DB init, and helpers a
 
 **Cat identification pipeline:**
 - Upload → `extract_features()` → DINOv2-small ONNX (`dinov2_small.onnx`, 84MB, NOT in git) → cosine similarity against stored features → `find_similar_cat()` notifies owner if match found
+- Similarity threshold: 0.55; confidence = 60% absolute score + 40% margin
 
 **Family tree layout (JS in `templates/family_tree.html`):**
 - BFS assigns generations (parents above children)
@@ -46,18 +47,35 @@ Single-file Flask app (`app.py`) with SQLite. All routes, DB init, and helpers a
 - T-junction SVG connectors drawn per family group
 - Relation semantics: `(cat_id=A, related_cat_id=B, relation='father')` = "A's father is B"
 
+## Image Storage (Cloudinary)
+New uploads go directly from the browser to Cloudinary (Upload Widget), bypassing the server entirely — required because PythonAnywhere free tier blocks outbound HTTP.
+
+- Cloud name: `ddo0urbwv` (`CLOUDINARY_CLOUD_NAME` env var)
+- Upload preset: `catbook_upload` (`CLOUDINARY_UPLOAD_PRESET` env var) — unsigned
+- After upload, Cloudinary returns a URL stored in a hidden form field; app saves the URL to DB
+- **`photo_url(filename)`** — Jinja2 global that handles both storage types:
+  - If value starts with `http` → return as-is (Cloudinary URL)
+  - Otherwise → return `/static/uploads/<filename>` (legacy local file)
+- Old local images were migrated with `migrate_to_cloudinary.py`
+
 ## Key Conventions
 - All UI is Hebrew RTL; font is Rubik (Google Fonts)
 - Flash categories: `'warning'` gets yellow style; `'admin_*'` shown only in admin dashboard
 - Admin session: `session['is_admin']` (separate from `session['user_id']`)
 - Notifications: types are `identified`, `similar`, `tree_share`
-- Images saved locally to `static/uploads/` as JPEG (quality 85)
+- Images processed with PIL: resized to max 900×900, saved as JPEG quality 85 (legacy local path only)
+- Username inputs use `dir="auto"` (handles both Hebrew and English); password inputs use `dir="ltr"`
+
+## Database Tables
+`users`, `cats`, `cat_photos` (with `features` JSON for DINOv2 vectors), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`
+
+Schema is initialized in `app.py` `init_db()`. Migrations (ALTER TABLE for new columns) run automatically on startup.
 
 ## Files NOT in Git
 | File | Why |
 |------|-----|
 | `catbook.db` | SQLite DB with all user data |
-| `static/uploads/` | User-uploaded images |
+| `static/uploads/` | Legacy local images (mostly migrated to Cloudinary) |
 | `dinov2_small.onnx` | 84MB ONNX model |
 | `.env` | Secrets |
 
@@ -68,8 +86,12 @@ Single-file Flask app (`app.py`) with SQLite. All routes, DB init, and helpers a
 
 ## .env Variables
 ```
-SECRET_KEY=catbook-secret-2024
+SECRET_KEY=...
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=CatBook2024!
-ADMIN_SECRET=secret77
+ADMIN_PASSWORD=...
+ADMIN_SECRET=...
+CLOUDINARY_CLOUD_NAME=ddo0urbwv
+CLOUDINARY_UPLOAD_PRESET=catbook_upload
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
 ```

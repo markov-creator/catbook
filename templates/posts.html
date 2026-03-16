@@ -3,39 +3,12 @@
 
 <div class="page-header">
   <h1 class="page-title">פוסטים</h1>
-</div>
-
-<div class="post-create-card">
-  <form method="POST" action="{{ url_for('post_create') }}" enctype="multipart/form-data">
-    <div class="post-create-row">
-      <select name="cat_id">
-        <option value="">ללא חתול ספציפי</option>
-        {% for cat in my_cats %}
-          <option value="{{ cat.id }}">{{ cat.name }}</option>
-        {% endfor %}
-      </select>
-      <select name="purpose">
-        <option value="share">פרסום החתול שלי</option>
-        <option value="adoption">חתול לאימוץ</option>
-      </select>
-      <select name="visibility">
-        <option value="friends">חברים בלבד</option>
-        <option value="everyone">כולם</option>
-      </select>
-    </div>
-    <input type="hidden" name="photo_url" id="post-photo-url" value="">
-    <div id="post-photo-preview" style="display:none;margin:0.5rem 0">
-      <img id="post-photo-thumb" src="" style="max-width:100%;max-height:200px;border-radius:8px">
-      <button type="button" onclick="clearPostPhoto()" style="display:block;margin-top:0.25rem;background:none;border:none;cursor:pointer;color:#888">✕ הסר תמונה</button>
-    </div>
-    <button type="button" class="btn btn-secondary" onclick="openPostWidget()" style="width:100%;margin:0.5rem 0">📷 הוסף תמונה</button>
-    <textarea name="caption" placeholder="כיתוב (אופציונלי)..." rows="2" style="width:100%;resize:vertical;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.5rem;font-family:inherit;font-size:1rem;"></textarea>
-    <button type="submit" class="btn" style="width:100%;margin-top:0.5rem">פרסם</button>
-  </form>
+  <a href="{{ url_for('post_new') }}" class="btn">✏️ פוסט חדש</a>
 </div>
 
 <div class="post-filters">
-  <a href="{{ url_for('posts') }}" class="post-filter-btn {% if not filter_purpose and not show_saved %}post-filter-btn--active{% endif %}">הכל</a>
+  <a href="{{ url_for('posts') }}" class="post-filter-btn {% if not filter_purpose and not show_saved and not show_friends %}post-filter-btn--active{% endif %}">הכל</a>
+  <a href="{{ url_for('posts', friends='1') }}" class="post-filter-btn {% if show_friends %}post-filter-btn--active{% endif %}">🤝 חברים</a>
   <a href="{{ url_for('posts', purpose='share') }}" class="post-filter-btn {% if filter_purpose == 'share' %}post-filter-btn--active{% endif %}">פרסום חתולים</a>
   <a href="{{ url_for('posts', purpose='adoption') }}" class="post-filter-btn {% if filter_purpose == 'adoption' %}post-filter-btn--active{% endif %}">🏠 לאימוץ</a>
   <a href="{{ url_for('posts', saved='1') }}" class="post-filter-btn {% if show_saved %}post-filter-btn--active{% endif %}">🔖 שמורים</a>
@@ -57,7 +30,13 @@
         <form method="POST" action="{{ url_for('post_save', post_id=p.id) }}" style="margin:0">
           <button type="submit" class="post-save-btn {% if p.id in saved_ids %}post-save-btn--saved{% endif %}" title="{% if p.id in saved_ids %}הסר שמירה{% else %}שמור פוסט{% endif %}">🔖</button>
         </form>
+        {% if friends %}
+        <button type="button" class="btn btn-secondary" style="font-size:.8rem;padding:3px 10px"
+                onclick="toggleEmailForm({{ p.id }})">✉️ שלח לחבר</button>
+        {% endif %}
         {% if p.user_id == uid %}
+        <button type="button" class="tag-delete-btn" title="ערוך פוסט"
+                onclick="toggleEditForm({{ p.id }})">✏️</button>
         <form method="POST" action="{{ url_for('post_delete', post_id=p.id) }}"
               onsubmit="return confirm('למחוק פוסט זה?')" style="margin:0">
           <button type="submit" class="tag-delete-btn" title="מחק פוסט">✕</button>
@@ -71,6 +50,43 @@
     {% endif %}
     {% if p.caption %}
     <div class="post-caption">{{ p.caption }}</div>
+    {% endif %}
+
+    {% if p.user_id == uid %}
+    <div id="edit-form-{{ p.id }}" style="display:none;background:#faf5ff;border-radius:8px;padding:10px;margin:6px 0;border:1.5px solid #e0c8f7">
+      <form method="POST" action="{{ url_for('post_edit', post_id=p.id) }}">
+        <textarea name="caption" rows="2" style="width:100%;resize:vertical;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.5rem;font-family:inherit;font-size:.95rem;margin-bottom:6px">{{ p.caption or '' }}</textarea>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <select name="purpose" style="flex:1;min-width:120px;border:1.5px solid var(--purple-light);border-radius:7px;padding:4px 8px;font-family:inherit">
+            <option value="share" {% if p.purpose == 'share' %}selected{% endif %}>פרסום החתול שלי</option>
+            <option value="adoption" {% if p.purpose == 'adoption' %}selected{% endif %}>חתול לאימוץ</option>
+          </select>
+          <select name="visibility" style="flex:1;min-width:120px;border:1.5px solid var(--purple-light);border-radius:7px;padding:4px 8px;font-family:inherit">
+            <option value="friends" {% if p.visibility == 'friends' %}selected{% endif %}>חברים בלבד</option>
+            <option value="everyone" {% if p.visibility == 'everyone' %}selected{% endif %}>כולם</option>
+          </select>
+          <button type="submit" class="btn" style="padding:4px 16px">שמור</button>
+          <button type="button" class="btn btn-secondary" style="padding:4px 12px" onclick="toggleEditForm({{ p.id }})">ביטול</button>
+        </div>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if friends %}
+    <div id="email-form-{{ p.id }}" style="display:none;background:#f0f7ff;border-radius:8px;padding:10px;margin:6px 0;border:1.5px solid #bbdefb">
+      <form method="POST" action="{{ url_for('post_send_email', post_id=p.id) }}"
+            style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <select name="friend_id" style="flex:1;min-width:150px;border:1.5px solid #90caf9;border-radius:7px;padding:5px 8px;font-family:inherit">
+          <option value="all">כל החברים</option>
+          {% for f in friends %}
+          <option value="{{ f.id }}">{{ f.username }}{% if not f.email %} (אין מייל){% endif %}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn" style="padding:5px 16px">שלח ✉️</button>
+        <button type="button" class="btn btn-secondary" style="padding:5px 10px"
+                onclick="toggleEmailForm({{ p.id }})">ביטול</button>
+      </form>
+    </div>
     {% endif %}
 
     <div class="post-comments">
@@ -97,36 +113,19 @@
 {% else %}
 <div class="empty-state" style="margin-top:2rem">
   <div class="empty-icon">{% if show_saved %}🔖{% else %}📸{% endif %}</div>
-  <p>{% if show_saved %}אין פוסטים שמורים עדיין{% elif filter_purpose %}אין פוסטים בקטגוריה זו{% else %}אין פוסטים עדיין — היה הראשון לפרסם!{% endif %}</p>
+  <p>{% if show_saved %}אין פוסטים שמורים עדיין{% elif show_friends %}אין פוסטים מחברים עדיין{% elif filter_purpose %}אין פוסטים בקטגוריה זו{% else %}אין פוסטים עדיין — היה הראשון לפרסם!{% endif %}</p>
 </div>
 {% endif %}
 
-<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
 <script>
-const CLOUD_NAME = '{{ CLOUDINARY_CLOUD_NAME }}';
-const UPLOAD_PRESET = '{{ CLOUDINARY_UPLOAD_PRESET }}';
-
-function openPostWidget() {
-  cloudinary.openUploadWidget({
-    cloudName: CLOUD_NAME,
-    uploadPreset: UPLOAD_PRESET,
-    sources: ['local', 'camera'],
-    multiple: false,
-    language: 'he'
-  }, function(error, result) {
-    if (!error && result && result.event === 'success') {
-      const url = result.info.secure_url;
-      document.getElementById('post-photo-url').value = url;
-      document.getElementById('post-photo-thumb').src = url;
-      document.getElementById('post-photo-preview').style.display = 'block';
-    }
-  });
+function toggleEditForm(postId) {
+  const form = document.getElementById('edit-form-' + postId);
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 
-function clearPostPhoto() {
-  document.getElementById('post-photo-url').value = '';
-  document.getElementById('post-photo-preview').style.display = 'none';
-  document.getElementById('post-photo-thumb').src = '';
+function toggleEmailForm(postId) {
+  const form = document.getElementById('email-form-' + postId);
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 </script>
 

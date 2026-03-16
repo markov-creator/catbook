@@ -113,6 +113,28 @@
         לדיוק גבוה יותר — הוסף לפחות 3 תמונות לכל חתול מזוויות שונות
       </div>
       {% endif %}
+
+      {% if result.temp_filename %}
+      <div style="margin-top:1.2rem;border-top:1px solid #e8d5f7;padding-top:1rem">
+        <div style="font-weight:bold;margin-bottom:0.5rem;color:#3d006e">📸 פרסם תמונה זו כפוסט</div>
+        <form method="POST" action="{{ url_for('identify_post') }}">
+          <input type="hidden" name="temp_filename" value="{{ result.temp_filename }}">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem">
+            <select name="purpose" style="flex:1;min-width:130px;border:1.5px solid var(--purple-light);border-radius:7px;padding:5px 8px;font-family:inherit">
+              <option value="share">פרסום חתול</option>
+              <option value="adoption">חתול לאימוץ</option>
+            </select>
+            <select name="visibility" style="flex:1;min-width:130px;border:1.5px solid var(--purple-light);border-radius:7px;padding:5px 8px;font-family:inherit">
+              <option value="friends">חברים בלבד</option>
+              <option value="everyone">כולם</option>
+            </select>
+          </div>
+          <input type="text" name="caption" placeholder="כיתוב (אופציונלי)..."
+                 style="width:100%;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit;font-size:.95rem;margin-bottom:0.5rem">
+          <button type="submit" class="btn" style="width:100%">פרסם כפוסט</button>
+        </form>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>

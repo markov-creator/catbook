@@ -1,6 +1,10 @@
 import os
 import json
 import sqlite3
+import smtplib
+import threading
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from functools import wraps
 
 import numpy as np
@@ -32,6 +36,30 @@ ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', 'demo')
 CLOUDINARY_UPLOAD_PRESET = os.environ.get('CLOUDINARY_UPLOAD_PRESET', 'ml_default')
+
+MAIL_USER = os.environ.get('MAIL_USER', '')
+MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD', '')
+
+
+def send_email(to, subject, body):
+    """Send email in a background thread. Silently skips if not configured."""
+    if not MAIL_USER or not MAIL_PASSWORD or not to:
+        return
+
+    def _send():
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = f'CatBook 🐱 <{MAIL_USER}>'
+            msg['To'] = to
+            msg.attach(MIMEText(body, 'html', 'utf-8'))
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+                smtp.login(MAIL_USER, MAIL_PASSWORD)
+                smtp.sendmail(MAIL_USER, to, msg.as_string())
+        except Exception as e:
+            print(f'send_email error: {e}')
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 @app.template_global()
@@ -530,6 +558,30 @@ def register():
     return render_template('register.html')
 
 
+@app.route('/settings', methods=['GET', 'POST'])
+@login_required
+def settings():
+    db = get_db()
+    uid = session['user_id']
+    user = db.execute('SELECT username, email FROM users WHERE id=?', (uid,)).fetchone()
+    if request.method == 'POST':
+        new_username = request.form.get('username', '').strip()
+        new_email = request.form.get('email', '').strip() or None
+        if not new_username:
+            flash('שם משתמש לא יכול להיות ריק', 'warning')
+        else:
+            try:
+                db.execute('UPDATE users SET username=?, email=? WHERE id=?',
+                           (new_username, new_email, uid))
+                db.commit()
+                session['username'] = new_username
+                flash('הפרטים עודכנו בהצלחה')
+                return redirect(url_for('settings'))
+            except sqlite3.IntegrityError:
+                flash('שם המשתמש כבר תפוס', 'warning')
+    return render_template('settings.html', user=user)
+
+
 @app.route('/logout')
 def logout():
     session.clear()
@@ -1010,12 +1062,53 @@ def identify():
                                       from_user_id=uid, cat_id=c['cat_id'],
                                       photo=temp_filename, location=location,
                                       location_precise=location_precise)
+                    owner = db.execute('SELECT username, email FROM users WHERE id=?', (c['owner_id'],)).fetchone()
+                    if owner and owner['email']:
+                        loc_text = f'<p>📍 מיקום: {location}</p>' if location else ''
+                        send_email(
+                            to=owner['email'],
+                            subject=f'החתול שלך {c["cat_name"]} זוהה! 🐱',
+                            body=f'''
+                            <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
+                              <h2>שלום {owner["username"]}!</h2>
+                              <p>החתול שלך <strong>{c["cat_name"]}</strong> זוהה על ידי <strong>{session["username"]}</strong>.</p>
+                              {loc_text}
+                              <p><a href="https://catbook.pythonanywhere.com/notifications" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בהתראות</a></p>
+                            </div>'''
+                        )
                     notified.add(c['owner_id'])
         else:
             os.remove(temp_path)
             result = {'identified': [], 'few_photos': False, 'temp_filename': None}
 
     return render_template('identify.html', result=result)
+
+
+@app.route('/identify/post', methods=['POST'])
+@login_required
+def identify_post():
+    temp_filename = request.form.get('temp_filename', '')
+    session_url = session.get('identify_temp_url', '')
+    if not temp_filename or temp_filename != session_url:
+        flash('קובץ זמני לא נמצא')
+        return redirect(url_for('identify'))
+    temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
+    if not os.path.exists(temp_path):
+        flash('קובץ זמני לא נמצא')
+        return redirect(url_for('identify'))
+    visibility = request.form.get('visibility', 'friends')
+    if visibility not in ('friends', 'everyone'):
+        visibility = 'friends'
+    purpose = request.form.get('purpose', 'share')
+    if purpose not in ('share', 'adoption'):
+        purpose = 'share'
+    caption = request.form.get('caption', '').strip() or None
+    db = get_db()
+    db.execute('INSERT INTO posts (user_id, photo, caption, visibility, purpose) VALUES (?,?,?,?,?)',
+               (session['user_id'], temp_filename, caption, visibility, purpose))
+    db.commit()
+    flash('הפוסט פורסם בהצלחה')
+    return redirect(url_for('posts'))
 
 
 @app.route('/identify/save_photo', methods=['POST'])
@@ -1171,8 +1264,19 @@ def friend_add(user_id):
             (uid, user_id, context_photo or None, context_cat_id, context_own_cat_id, context_type, request_message)
         )
         db.commit()
-        u = db.execute('SELECT username FROM users WHERE id=?', (user_id,)).fetchone()
+        u = db.execute('SELECT username, email FROM users WHERE id=?', (user_id,)).fetchone()
         flash(f'בקשת חברות נשלחה ל-{u["username"]}')
+        if u['email']:
+            send_email(
+                to=u['email'],
+                subject='קיבלת בקשת חברות ב-CatBook 🐱',
+                body=f'''
+                <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
+                  <h2>שלום {u["username"]}!</h2>
+                  <p><strong>{session["username"]}</strong> שלח/ה לך בקשת חברות ב-CatBook.</p>
+                  <p><a href="https://catbook.pythonanywhere.com/friends" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בבקשה</a></p>
+                </div>'''
+            )
     except sqlite3.IntegrityError:
         flash('בקשת חברות כבר קיימת')
     return redirect(url_for('friends', q=request.form.get('q', '')))
@@ -1408,6 +1512,20 @@ def chat(friend_id):
 
 # ---------- Posts ----------
 
+@app.route('/posts/new')
+@login_required
+def post_new():
+    db = get_db()
+    uid = session['user_id']
+    my_cats = db.execute('SELECT id, name FROM cats WHERE user_id=? ORDER BY name', (uid,)).fetchall()
+    my_cat_photos = db.execute('''
+        SELECT cp.id, cp.filename, c.name as cat_name
+        FROM cat_photos cp JOIN cats c ON c.id=cp.cat_id
+        WHERE c.user_id=? ORDER BY c.name, cp.id
+    ''', (uid,)).fetchall()
+    return render_template('post_new.html', my_cats=my_cats, my_cat_photos=my_cat_photos)
+
+
 @app.route('/posts')
 @login_required
 def posts():
@@ -1422,6 +1540,7 @@ def posts():
 
     filter_purpose = request.args.get('purpose', '').strip()
     show_saved = request.args.get('saved') == '1'
+    show_friends = request.args.get('friends') == '1'
 
     saved_ids = {r['post_id'] for r in db.execute(
         'SELECT post_id FROM post_saves WHERE user_id=?', (uid,)
@@ -1439,6 +1558,12 @@ def posts():
     if filter_purpose in ('share', 'adoption'):
         base_query += ' AND p.purpose = ?'
         params.append(filter_purpose)
+    if show_friends:
+        if friend_ids:
+            base_query += ' AND p.user_id IN ({})'.format(','.join('?' * len(friend_ids)))
+            params.extend(list(friend_ids))
+        else:
+            base_query += ' AND 0'
     if show_saved:
         if saved_ids:
             base_query += ' AND p.id IN ({})'.format(','.join('?' * len(saved_ids)))
@@ -1465,9 +1590,15 @@ def posts():
                           'user_id': c['user_id'],
                           'created_at': c['created_at'][:16].replace('T', ' ')} for c in comments],
         })
-    my_cats = db.execute('SELECT id, name FROM cats WHERE user_id=? ORDER BY name', (uid,)).fetchall()
-    return render_template('posts.html', posts=posts_data, my_cats=my_cats, uid=uid,
-                           filter_purpose=filter_purpose, saved_ids=saved_ids, show_saved=show_saved)
+    friends = db.execute('''
+        SELECT u.id, u.username, u.email FROM friendships f
+        JOIN users u ON u.id = CASE WHEN f.requester_id=? THEN f.receiver_id ELSE f.requester_id END
+        WHERE (f.requester_id=? OR f.receiver_id=?) AND f.status='accepted' ORDER BY u.username
+    ''', (uid, uid, uid)).fetchall()
+    return render_template('posts.html', posts=posts_data, uid=uid,
+                           filter_purpose=filter_purpose, saved_ids=saved_ids,
+                           show_saved=show_saved, show_friends=show_friends,
+                           friends=friends)
 
 
 @app.route('/posts/create', methods=['POST'])
@@ -1506,6 +1637,78 @@ def post_create():
                (uid, cat_id, photo, caption, visibility, purpose))
     db.commit()
     return redirect(url_for('posts'))
+
+
+@app.route('/posts/<int:post_id>/send-email', methods=['POST'])
+@login_required
+def post_send_email(post_id):
+    db = get_db()
+    uid = session['user_id']
+    post = db.execute('''
+        SELECT p.*, u.username FROM posts p JOIN users u ON u.id=p.user_id WHERE p.id=?
+    ''', (post_id,)).fetchone()
+    if not post:
+        return redirect(url_for('posts'))
+    friend_id_raw = request.form.get('friend_id', '')
+    caption_text = f'<p style="font-style:italic">"{post["caption"]}"</p>' if post['caption'] else ''
+    photo_text = f'<p><img src="{photo_url(post["photo"])}" style="max-width:400px;border-radius:8px"></p>' if post['photo'] else ''
+
+    def _email_body(username):
+        return f'''
+        <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
+          <h2>שלום {username}!</h2>
+          <p><strong>{session["username"]}</strong> שיתף איתך פוסט:</p>
+          {caption_text}
+          {photo_text}
+          <p><a href="https://catbook.pythonanywhere.com/posts" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בפוסטים</a></p>
+        </div>'''
+
+    if friend_id_raw == 'all':
+        recipients = db.execute('''
+            SELECT u.username, u.email FROM users u
+            JOIN friendships f ON (f.requester_id=? AND f.receiver_id=u.id) OR (f.receiver_id=? AND f.requester_id=u.id)
+            WHERE f.status='accepted' AND u.email IS NOT NULL AND u.email != ''
+        ''', (uid, uid)).fetchall()
+        for r in recipients:
+            send_email(to=r['email'],
+                       subject=f'{session["username"]} שיתף איתך פוסט מ-CatBook 🐱',
+                       body=_email_body(r['username']))
+        flash(f'הפוסט נשלח במייל לכל החברים ({len(recipients)})')
+    else:
+        friend = db.execute('''
+            SELECT u.username, u.email FROM users u
+            JOIN friendships f ON (f.requester_id=? AND f.receiver_id=u.id) OR (f.receiver_id=? AND f.requester_id=u.id)
+            WHERE u.id=? AND f.status='accepted'
+        ''', (uid, uid, friend_id_raw)).fetchone()
+        if not friend or not friend['email']:
+            flash('לא ניתן לשלוח — לחבר זה אין אימייל רשום')
+            return redirect(url_for('posts') + f'#post-{post_id}')
+        send_email(to=friend['email'],
+                   subject=f'{session["username"]} שיתף איתך פוסט מ-CatBook 🐱',
+                   body=_email_body(friend['username']))
+        flash(f'הפוסט נשלח במייל ל-{friend["username"]}')
+    return redirect(url_for('posts') + f'#post-{post_id}')
+
+
+@app.route('/posts/<int:post_id>/edit', methods=['POST'])
+@login_required
+def post_edit(post_id):
+    db = get_db()
+    uid = session['user_id']
+    post = db.execute('SELECT id, user_id FROM posts WHERE id=?', (post_id,)).fetchone()
+    if not post or post['user_id'] != uid:
+        return redirect(url_for('posts'))
+    caption = request.form.get('caption', '').strip() or None
+    visibility = request.form.get('visibility', 'friends')
+    if visibility not in ('friends', 'everyone'):
+        visibility = 'friends'
+    purpose = request.form.get('purpose', 'share')
+    if purpose not in ('share', 'adoption'):
+        purpose = 'share'
+    db.execute('UPDATE posts SET caption=?, visibility=?, purpose=? WHERE id=?',
+               (caption, visibility, purpose, post_id))
+    db.commit()
+    return redirect(url_for('posts') + f'#post-{post_id}')
 
 
 @app.route('/posts/<int:post_id>/delete', methods=['POST'])

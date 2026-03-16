@@ -29,6 +29,7 @@
     <a href="{{ url_for('friends') }}">
       💬{% if unread_messages > 0 %}<span class="nav-badge">{{ unread_messages }}</span>{% endif %}
     </a>
+    <a href="{{ url_for('settings') }}">⚙️</a>
     <a href="{{ url_for('logout') }}" class="btn-logout">התנתק</a>
   </div>
   {% endif %}
