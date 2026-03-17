@@ -1067,11 +1067,11 @@ def identify():
                         loc_text = f'<p>📍 מיקום: {location}</p>' if location else ''
                         send_email(
                             to=owner['email'],
-                            subject=f'החתול שלך {c["cat_name"]} זוהה! 🐱',
+                            subject=f'החתול שלך {c["name"]} זוהה! 🐱',
                             body=f'''
                             <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
                               <h2>שלום {owner["username"]}!</h2>
-                              <p>החתול שלך <strong>{c["cat_name"]}</strong> זוהה על ידי <strong>{session["username"]}</strong>.</p>
+                              <p>החתול שלך <strong>{c["name"]}</strong> זוהה על ידי <strong>{session["username"]}</strong>.</p>
                               {loc_text}
                               <p><a href="https://catbook.pythonanywhere.com/notifications" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בהתראות</a></p>
                             </div>'''
