@@ -16,6 +16,7 @@
   {% if session.user_id %}
   <div class="nav-links">
     <span>שלום, {{ session.username }}</span>
+    <a href="{{ url_for('index') }}">🏠 בית</a>
     <a href="{{ url_for('cats') }}">🐱 החתולים שלי</a>
     <a href="{{ url_for('family_tree') }}">🐈🌳 עץ משפחה</a>
     <a href="{{ url_for('identify') }}">🔍 זיהוי חתול</a>

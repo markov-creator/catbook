@@ -143,7 +143,8 @@ function openCloudinaryWidget(catId) {
     sources: ['local', 'camera'],
     multiple: false,
     cropping: false,
-    language: 'he'
+    language: 'he',
+    folder: 'catbook/{{ session.user_id }}'
   }, function(error, result) {
     if (!error && result && result.event === 'success') {
       const url = result.info.secure_url;

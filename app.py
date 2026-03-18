@@ -258,6 +258,11 @@ def init_db():
             db.execute('ALTER TABLE users ADD COLUMN email TEXT')
         except Exception:
             pass
+        # add home_bg column if missing
+        try:
+            db.execute('ALTER TABLE users ADD COLUMN home_bg TEXT')
+        except Exception:
+            pass
         # add features column if missing
         try:
             db.execute('ALTER TABLE cat_photos ADD COLUMN features TEXT')
@@ -510,9 +515,43 @@ def get_or_compute_features(db, photo_id, filename):
 
 @app.route('/')
 def index():
-    if 'user_id' in session:
-        return redirect(url_for('cats'))
-    return redirect(url_for('login'))
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    db = get_db()
+    uid = session['user_id']
+
+    notifs = db.execute('''
+        SELECT n.*, u.username as from_username
+        FROM notifications n
+        LEFT JOIN users u ON u.id = n.from_user_id
+        WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 5
+    ''', (uid,)).fetchall()
+
+    conversations = db.execute('''
+        SELECT u.id, u.username,
+               m.content, m.sent_at,
+               SUM(CASE WHEN m.receiver_id=? AND m.is_read=0 THEN 1 ELSE 0 END) as unread
+        FROM messages m
+        JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
+        WHERE m.sender_id=? OR m.receiver_id=?
+        GROUP BY u.id
+        ORDER BY MAX(m.sent_at) DESC LIMIT 5
+    ''', (uid, uid, uid, uid)).fetchall()
+
+    posts = db.execute('''
+        SELECT p.*, u.username, c.name as cat_name
+        FROM posts p
+        JOIN users u ON u.id = p.user_id
+        LEFT JOIN cats c ON c.id = p.cat_id
+        JOIN friendships f ON (f.requester_id=? AND f.receiver_id=p.user_id)
+                           OR (f.receiver_id=? AND f.requester_id=p.user_id)
+        WHERE f.status='accepted'
+        ORDER BY p.created_at DESC LIMIT 5
+    ''', (uid, uid)).fetchall()
+
+    user = db.execute('SELECT home_bg FROM users WHERE id=?', (uid,)).fetchone()
+    home_bg = photo_url(user['home_bg']) if user and user['home_bg'] else None
+    return render_template('home.html', notifs=notifs, conversations=conversations, posts=posts, home_bg=home_bg)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -563,16 +602,17 @@ def register():
 def settings():
     db = get_db()
     uid = session['user_id']
-    user = db.execute('SELECT username, email FROM users WHERE id=?', (uid,)).fetchone()
+    user = db.execute('SELECT username, email, home_bg FROM users WHERE id=?', (uid,)).fetchone()
     if request.method == 'POST':
         new_username = request.form.get('username', '').strip()
         new_email = request.form.get('email', '').strip() or None
+        new_home_bg = request.form.get('home_bg', '').strip() or None
         if not new_username:
             flash('שם משתמש לא יכול להיות ריק', 'warning')
         else:
             try:
-                db.execute('UPDATE users SET username=?, email=? WHERE id=?',
-                           (new_username, new_email, uid))
+                db.execute('UPDATE users SET username=?, email=?, home_bg=? WHERE id=?',
+                           (new_username, new_email, new_home_bg, uid))
                 db.commit()
                 session['username'] = new_username
                 flash('הפרטים עודכנו בהצלחה')
@@ -953,32 +993,53 @@ def delete_cat(cat_id):
 @app.route('/identify', methods=['GET', 'POST'])
 @login_required
 def identify():
+    db = get_db()
+    uid = session['user_id']
     result = None
+
+    # Fetch user's cat photos for "existing photo" selection
+    my_photos = db.execute('''
+        SELECT cp.id, cp.filename, c.name as cat_name
+        FROM cat_photos cp JOIN cats c ON c.id = cp.cat_id
+        WHERE c.user_id = ? AND cp.features IS NOT NULL ORDER BY c.name, cp.id
+    ''', (uid,)).fetchall()
+
     if request.method == 'POST':
-        file = request.files.get('photo')
         location = request.form.get('location', '').strip() or None
         location_precise = request.form.get('location_precise', '').strip() or None
-        if not file or not file.filename:
-            flash('נא לבחור תמונה')
-            return render_template('identify.html', result=None)
+        existing_photo_id = request.form.get('existing_photo_id', '').strip()
 
-        # Save temp copy so user can add it to the identified cat later
-        ext = os.path.splitext(file.filename)[1].lower()
-        temp_filename = f'temp_{session["user_id"]}_{os.urandom(6).hex()}{ext}'
-        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
-        img = Image.open(file).convert('RGB')
-        img.thumbnail((900, 900), Image.LANCZOS)
-        img.save(temp_path)
+        if existing_photo_id:
+            # Use features already stored in DB
+            photo_row = db.execute(
+                'SELECT id, filename, features FROM cat_photos WHERE id=? AND EXISTS (SELECT 1 FROM cats WHERE id=cat_photos.cat_id AND user_id=?)',
+                (existing_photo_id, uid)
+            ).fetchone()
+            if not photo_row or not photo_row['features']:
+                flash('לא ניתן להשתמש בתמונה זו — אין features מאוחסנים')
+                return render_template('identify.html', result=None, my_photos=my_photos)
+            query_feat = np.array(json.loads(photo_row['features']), dtype=np.float32)
+            temp_filename = photo_row['filename']
+        else:
+            file = request.files.get('photo')
+            if not file or not file.filename:
+                flash('נא לבחור תמונה')
+                return render_template('identify.html', result=None, my_photos=my_photos)
 
-        try:
-            query_feat = extract_features(temp_path)
-        except Exception as e:
-            os.remove(temp_path)
-            flash(f'שגיאה בעיבוד התמונה: {e}')
-            return render_template('identify.html', result=None)
+            # Save temp copy so user can add it to the identified cat later
+            ext = os.path.splitext(file.filename)[1].lower()
+            temp_filename = f'temp_{session["user_id"]}_{os.urandom(6).hex()}{ext}'
+            temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
+            img = Image.open(file).convert('RGB')
+            img.thumbnail((900, 900), Image.LANCZOS)
+            img.save(temp_path)
 
-        db = get_db()
-        uid = session['user_id']
+            try:
+                query_feat = extract_features(temp_path)
+            except Exception as e:
+                os.remove(temp_path)
+                flash(f'שגיאה בעיבוד התמונה: {e}')
+                return render_template('identify.html', result=None, my_photos=my_photos)
 
         # All cats from all users
         cat_rows = db.execute(
@@ -986,9 +1047,10 @@ def identify():
         ).fetchall()
 
         if not cat_rows:
-            os.remove(temp_path)
+            if not existing_photo_id:
+                os.remove(temp_path)
             flash('אין חתולים רשומים באתר')
-            return render_template('identify.html', result=None)
+            return render_template('identify.html', result=None, my_photos=my_photos)
 
         MATCH_THRESHOLD = 0.55
         few_photos_warning = False
@@ -1078,10 +1140,11 @@ def identify():
                         )
                     notified.add(c['owner_id'])
         else:
-            os.remove(temp_path)
+            if not existing_photo_id:
+                os.remove(temp_path)
             result = {'identified': [], 'few_photos': False, 'temp_filename': None}
 
-    return render_template('identify.html', result=result)
+    return render_template('identify.html', result=result, my_photos=my_photos)
 
 
 @app.route('/identify/post', methods=['POST'])
@@ -1637,6 +1700,53 @@ def post_create():
                (uid, cat_id, photo, caption, visibility, purpose))
     db.commit()
     return redirect(url_for('posts'))
+
+
+@app.route('/posts/<int:post_id>/send-chat', methods=['POST'])
+@login_required
+def post_send_chat(post_id):
+    db = get_db()
+    uid = session['user_id']
+    post = db.execute('SELECT * FROM posts WHERE id=?', (post_id,)).fetchone()
+    if not post:
+        return redirect(url_for('posts'))
+    friend_id_raw = request.form.get('friend_id', '')
+    # Build message content
+    parts = []
+    if post['caption']:
+        parts.append(post['caption'])
+    content = '\n'.join(parts) if parts else '📸 שיתף פוסט'
+    image = post['photo'] if post['photo'] else None
+
+    def _send(fid):
+        db.execute(
+            'INSERT INTO messages (sender_id, receiver_id, content, image) VALUES (?, ?, ?, ?)',
+            (uid, fid, content, image)
+        )
+
+    if friend_id_raw == 'all':
+        friends = db.execute('''
+            SELECT u.id FROM users u
+            JOIN friendships f ON (f.requester_id=? AND f.receiver_id=u.id) OR (f.receiver_id=? AND f.requester_id=u.id)
+            WHERE f.status='accepted'
+        ''', (uid, uid)).fetchall()
+        for f in friends:
+            _send(f['id'])
+        db.commit()
+        flash(f'הפוסט נשלח בצ\'אט לכל החברים ({len(friends)})')
+        return redirect(url_for('posts') + f'#post-{post_id}')
+    else:
+        friend = db.execute('''
+            SELECT u.id FROM users u
+            JOIN friendships f ON (f.requester_id=? AND f.receiver_id=u.id) OR (f.receiver_id=? AND f.requester_id=u.id)
+            WHERE u.id=? AND f.status='accepted'
+        ''', (uid, uid, friend_id_raw)).fetchone()
+        if not friend:
+            flash('חבר לא נמצא')
+            return redirect(url_for('posts') + f'#post-{post_id}')
+        _send(int(friend_id_raw))
+        db.commit()
+        return redirect(url_for('chat', friend_id=friend_id_raw))
 
 
 @app.route('/posts/<int:post_id>/send-email', methods=['POST'])

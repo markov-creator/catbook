@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="home-banner" {% if home_bg %}style="background-image:url('{{ home_bg }}')"{% endif %}>
+  {% if home_bg %}
+  <div class="home-banner-overlay"></div>
+  {% endif %}
+  <div class="home-banner-content" {% if not home_bg %}style="color:var(--purple)"{% endif %}>
+    <h1>{{ session.username }}, ברוך הבא!</h1>
+  </div>
+</div>
+
+<style>
+.home-banner {
+  text-align:center;padding:3rem 1rem;margin-bottom:1.5rem;
+  border-radius:16px;background:#fff;box-shadow:0 2px 12px rgba(106,13,173,.08);
+  position:relative;overflow:hidden;background-size:cover;background-position:center;
+}
+.home-banner-overlay {
+  position:absolute;inset:0;background:rgba(0,0,0,0.45);border-radius:inherit;
+}
+.home-banner-content {
+  position:relative;z-index:1;color:#fff;
+}
+.home-banner-content h1 {
+  font-size:2.5rem;margin:0 0 0.3rem;
+}
+.home-banner-content p {
+  font-size:1.4rem;margin:0;font-weight:600;
+}
+</style>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1.25rem">
+
+  <!-- התראות אחרונות -->
+  <div class="card" style="padding:1.25rem;display:flex;flex-direction:column">
+    <h2 style="margin:0 0 1rem;font-size:1.15rem;text-align:right">🔔 התראות אחרונות</h2>
+    <div style="flex:1;display:flex;flex-direction:column;gap:0.5rem">
+      {% if notifs %}
+        {% for n in notifs %}
+        <div style="padding:0.65rem;border-radius:8px;background:#faf5ff;font-size:.95rem;text-align:right">
+          {% if n.type == 'identified' %}🔍 החתול שלך זוהה על ידי <strong>{{ n.from_username }}</strong>
+          {% elif n.type == 'similar' %}🐱 נמצא חתול דומה
+          {% elif n.type == 'tree_share' %}🌳 <strong>{{ n.from_username }}</strong> שיתף אותך בעץ משפחה
+          {% elif n.type == 'friend_request' %}🤝 <strong>{{ n.from_username }}</strong> שלח בקשת חברות
+          {% else %}{{ n.type }}{% endif %}
+          <div style="font-size:.78rem;color:#aaa;margin-top:3px">{{ n.created_at }}</div>
+        </div>
+        {% endfor %}
+      {% else %}
+      <p style="color:#bbb;text-align:center;font-size:1rem;flex:1;display:flex;align-items:center;justify-content:center;margin:0">אין התראות</p>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('notifications') }}" style="display:block;text-align:left;margin-top:1rem;font-size:.9rem;color:var(--purple);font-weight:600">← כל ההתראות</a>
+  </div>
+
+  <!-- צ'אטים אחרונים -->
+  <div class="card" style="padding:1.25rem;display:flex;flex-direction:column">
+    <h2 style="margin:0 0 1rem;font-size:1.15rem;text-align:right">💬 צ'אטים אחרונים</h2>
+    <div style="flex:1;display:flex;flex-direction:column;gap:0.5rem">
+      {% if conversations %}
+        {% for c in conversations %}
+        <a href="{{ url_for('chat', friend_id=c.id) }}"
+           style="padding:0.65rem;border-radius:8px;background:#f0f7ff;font-size:.95rem;text-align:right;text-decoration:none;color:inherit;display:block">
+          <div style="font-weight:700;color:var(--purple);font-size:1rem">
+            {{ c.username }}
+            {% if c.unread %}<span style="background:var(--purple);color:#fff;border-radius:50%;padding:1px 7px;font-size:.75rem;margin-right:4px">{{ c.unread }}</span>{% endif %}
+          </div>
+          <div style="color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">{{ c.content or '📷 תמונה' }}</div>
+          <div style="font-size:.78rem;color:#aaa;margin-top:3px">{{ c.sent_at }}</div>
+        </a>
+        {% endfor %}
+      {% else %}
+      <p style="color:#bbb;text-align:center;font-size:1rem;flex:1;display:flex;align-items:center;justify-content:center;margin:0">אין שיחות</p>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('friends') }}" style="display:block;text-align:left;margin-top:1rem;font-size:.9rem;color:var(--purple);font-weight:600">← כל הצ'אטים</a>
+  </div>
+
+  <!-- פוסטים חדשים -->
+  <div class="card" style="padding:1.25rem;display:flex;flex-direction:column">
+    <h2 style="margin:0 0 1rem;font-size:1.15rem;text-align:right">📸 פוסטים חדשים</h2>
+    <div style="flex:1;display:flex;flex-direction:column;gap:0.5rem">
+      {% if posts %}
+        {% for p in posts %}
+        <a href="{{ url_for('posts') }}#post-{{ p.id }}"
+           style="display:flex;gap:0.75rem;align-items:center;text-decoration:none;color:inherit;background:#faf5ff;padding:0.65rem;border-radius:8px">
+          {% if p.photo %}
+          <img src="{{ photo_url(p.photo) }}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;flex-shrink:0">
+          {% else %}
+          <div style="width:56px;height:56px;background:#e0c8f7;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0">🐱</div>
+          {% endif %}
+          <div style="text-align:right;overflow:hidden;flex:1">
+            <div style="font-weight:700;font-size:.95rem;color:var(--purple)">{{ p.username }}{% if p.cat_name %} — {{ p.cat_name }}{% endif %}</div>
+            <div style="font-size:.85rem;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px">{{ p.caption or '📷 תמונה' }}</div>
+            <div style="font-size:.78rem;color:#aaa;margin-top:2px">{{ p.created_at }}</div>
+          </div>
+        </a>
+        {% endfor %}
+      {% else %}
+      <p style="color:#bbb;text-align:center;font-size:1rem;flex:1;display:flex;align-items:center;justify-content:center;margin:0">אין פוסטים חדשים</p>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('posts') }}" style="display:block;text-align:left;margin-top:1rem;font-size:.9rem;color:var(--purple);font-weight:600">← כל הפוסטים</a>
+  </div>
+
+</div>
+
+<style>
+@media (max-width: 700px) {
+  div[style*="grid-template-columns:repeat(3"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+</style>
+
+{% endblock %}

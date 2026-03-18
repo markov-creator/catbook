@@ -32,7 +32,7 @@
         </form>
         {% if friends %}
         <button type="button" class="btn btn-secondary" style="font-size:.8rem;padding:3px 10px"
-                onclick="toggleEmailForm({{ p.id }})">✉️ שלח לחבר</button>
+                onclick="toggleShareForm({{ p.id }})">שתף עם חבר</button>
         {% endif %}
         {% if p.user_id == uid %}
         <button type="button" class="tag-delete-btn" title="ערוך פוסט"
@@ -73,19 +73,31 @@
     {% endif %}
 
     {% if friends %}
-    <div id="email-form-{{ p.id }}" style="display:none;background:#f0f7ff;border-radius:8px;padding:10px;margin:6px 0;border:1.5px solid #bbdefb">
-      <form method="POST" action="{{ url_for('post_send_email', post_id=p.id) }}"
-            style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-        <select name="friend_id" style="flex:1;min-width:150px;border:1.5px solid #90caf9;border-radius:7px;padding:5px 8px;font-family:inherit">
-          <option value="all">כל החברים</option>
-          {% for f in friends %}
-          <option value="{{ f.id }}">{{ f.username }}{% if not f.email %} (אין מייל){% endif %}</option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn" style="padding:5px 16px">שלח ✉️</button>
+    <div id="share-form-{{ p.id }}" style="display:none;background:#f0f7ff;border-radius:8px;padding:10px;margin:6px 0;border:1.5px solid #bbdefb">
+      <select id="share-friend-{{ p.id }}" style="width:100%;margin-bottom:8px;border:1.5px solid #90caf9;border-radius:7px;padding:5px 8px;font-family:inherit">
+        <option value="all">כל החברים</option>
+        {% for f in friends %}
+        <option value="{{ f.id }}">{{ f.username }}</option>
+        {% endfor %}
+      </select>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <form method="POST" action="{{ url_for('post_send_chat', post_id=p.id) }}" style="margin:0;flex:1">
+          <input type="hidden" name="friend_id" id="chat-friend-{{ p.id }}">
+          <button type="submit" class="btn" style="width:100%;padding:5px"
+                  onclick="document.getElementById('chat-friend-{{ p.id }}').value=document.getElementById('share-friend-{{ p.id }}').value">
+            💬 שלח בצ'אט
+          </button>
+        </form>
+        <form method="POST" action="{{ url_for('post_send_email', post_id=p.id) }}" style="margin:0;flex:1">
+          <input type="hidden" name="friend_id" id="email-friend-{{ p.id }}">
+          <button type="submit" class="btn btn-secondary" style="width:100%;padding:5px"
+                  onclick="document.getElementById('email-friend-{{ p.id }}').value=document.getElementById('share-friend-{{ p.id }}').value">
+            ✉️ שלח במייל
+          </button>
+        </form>
         <button type="button" class="btn btn-secondary" style="padding:5px 10px"
-                onclick="toggleEmailForm({{ p.id }})">ביטול</button>
-      </form>
+                onclick="toggleShareForm({{ p.id }})">ביטול</button>
+      </div>
     </div>
     {% endif %}
 
@@ -123,8 +135,8 @@ function toggleEditForm(postId) {
   form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 
-function toggleEmailForm(postId) {
-  const form = document.getElementById('email-form-' + postId);
+function toggleShareForm(postId) {
+  const form = document.getElementById('share-form-' + postId);
   form.style.display = form.style.display === 'none' ? 'block' : 'none';
 }
 </script>

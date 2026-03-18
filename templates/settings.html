@@ -3,7 +3,7 @@
 
 <div class="auth-container">
   <h1 class="auth-title">⚙️ הגדרות חשבון</h1>
-  <form method="POST">
+  <form method="POST" id="settings-form">
     <div class="form-group">
       <label for="username">שם משתמש</label>
       <input type="text" id="username" name="username" required
@@ -14,11 +14,54 @@
       <input type="email" id="email" name="email"
              value="{{ user.email or '' }}" placeholder="example@email.com" dir="ltr">
     </div>
+
+    <div class="form-group">
+      <label>תמונת רקע לדף הבית</label>
+      <input type="hidden" name="home_bg" id="home_bg_input" value="{{ user.home_bg or '' }}">
+      {% if user.home_bg %}
+      <img id="home_bg_preview" src="{{ photo_url(user.home_bg) }}"
+           style="width:100%;height:140px;object-fit:cover;border-radius:8px;margin-bottom:8px">
+      {% else %}
+      <img id="home_bg_preview" src="" style="display:none;width:100%;height:140px;object-fit:cover;border-radius:8px;margin-bottom:8px">
+      {% endif %}
+      <button type="button" class="btn btn-secondary btn-full" id="upload_bg_btn">📷 העלה תמונת רקע</button>
+    </div>
+
     <button type="submit" class="btn btn-full">שמור שינויים</button>
   </form>
   <div class="auth-link">
-    <a href="{{ url_for('cats') }}">← חזרה</a>
+    <a href="{{ url_for('index') }}">← חזרה לדף הבית</a>
   </div>
 </div>
+
+<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
+<script>
+document.getElementById('upload_bg_btn').addEventListener('click', function() {
+  cloudinary.openUploadWidget({
+    cloudName: '{{ CLOUDINARY_CLOUD_NAME }}',
+    uploadPreset: '{{ CLOUDINARY_UPLOAD_PRESET }}',
+    sources: ['local', 'camera'],
+    multiple: false,
+    language: 'he',
+    folder: 'catbook/{{ session.user_id }}',
+    cropping: true,
+    croppingAspectRatio: 4,
+    showSkipCropButton: false
+  }, function(error, result) {
+    if (!error && result && result.event === 'success') {
+      var info = result.info;
+      var url = info.secure_url;
+      if (info.coordinates && info.coordinates.custom && info.coordinates.custom[0]) {
+        var crop = info.coordinates.custom[0];
+        url = 'https://res.cloudinary.com/{{ CLOUDINARY_CLOUD_NAME }}/image/upload/c_crop,x_' + crop[0] + ',y_' + crop[1] + ',w_' + crop[2] + ',h_' + crop[3] + '/' + info.public_id;
+      }
+      document.getElementById('home_bg_input').value = url;
+      var preview = document.getElementById('home_bg_preview');
+      preview.src = url;
+      preview.style.display = 'block';
+    }
+  });
+});
+</script>
 
 {% endblock %}

@@ -66,7 +66,8 @@ function openPostWidget() {
     uploadPreset: UPLOAD_PRESET,
     sources: ['local', 'camera'],
     multiple: false,
-    language: 'he'
+    language: 'he',
+    folder: 'catbook/{{ session.user_id }}'
   }, function(error, result) {
     if (!error && result && result.event === 'success') {
       const url = result.info.secure_url;

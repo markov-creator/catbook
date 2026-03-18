@@ -1356,8 +1356,10 @@ input[type="password"]:focus {
 .post-save-btn--saved { opacity: 1; }
 .post-photo {
   width: 100%;
-  height: auto;
+  max-height: 400px;
+  object-fit: contain;
   display: block;
+  background: #f5f0ff;
 }
 .post-caption {
   padding: 0.75rem 1rem;
