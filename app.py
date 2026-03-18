@@ -568,7 +568,7 @@ def login():
             db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,1,?)',
                        (username, user['id'], ip))
             db.commit()
-            return redirect(url_for('cats'))
+            return redirect(url_for('index'))
         db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,0,?)',
                    (username, user['id'] if user else None, ip))
         db.commit()
