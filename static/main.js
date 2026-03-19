@@ -31,14 +31,8 @@ function initIdentifyPreview() {
     const file = this.files[0];
     if (!file) return;
     showCropModal(file, function(croppedBlob) {
-      // Replace file input with cropped blob so the form submits the cropped image
-      try {
-        const dt = new DataTransfer();
-        dt.items.add(new File([croppedBlob], 'cropped.jpg', {type: 'image/jpeg'}));
-        input.files = dt.files;
-      } catch(e) {
-        // DataTransfer not supported — fall back to original file
-      }
+      // Show cropped preview to user, but keep original file in input for server
+      // (stored features were computed from full images — must stay consistent)
       const reader = new FileReader();
       reader.onload = e => {
         preview.innerHTML = `<img src="${e.target.result}" alt="תמונה לזיהוי">`;
