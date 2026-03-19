@@ -1194,9 +1194,8 @@ def identify():
                         )
                     notified.add(c['owner_id'])
         else:
-            if not existing_photo_id:
-                os.remove(temp_path)
-            result = {'identified': [], 'few_photos': False, 'temp_filename': None}
+            session['identify_temp_url'] = temp_filename
+            result = {'identified': [], 'few_photos': False, 'temp_filename': temp_filename}
 
     return render_template('identify.html', result=result, my_photos=my_photos)
 

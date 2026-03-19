@@ -65,16 +65,18 @@ def fetch_image(url_or_path: str) -> Image.Image:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true', help='Only count, do not update')
+    parser.add_argument('--db', default=DB_PATH, help='Path to SQLite DB file')
     args = parser.parse_args()
 
-    if not os.path.exists(DB_PATH):
-        print(f'DB not found: {DB_PATH}')
+    db_path = args.db
+    if not os.path.exists(db_path):
+        print(f'DB not found: {db_path}')
         return
     if not os.path.exists(MODEL_PATH):
         print(f'Model not found: {MODEL_PATH}')
         return
 
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
     rows = con.execute(
         'SELECT id, filename FROM cat_photos WHERE features IS NULL OR features = ""'
