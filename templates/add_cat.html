@@ -7,7 +7,7 @@
 </div>
 
 <div class="form-card">
-  <form method="POST" enctype="multipart/form-data">
+  <form method="POST" id="add-cat-form" enctype="multipart/form-data">
 
     <div class="form-group">
       <label for="cat-name">שם החתול</label>
@@ -18,7 +18,12 @@
       <label>תמונות של החתול</label>
       <div id="photo-preview" style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem"></div>
       <div id="photo-urls-container"></div>
-      <button type="button" class="btn btn-secondary" onclick="openCatWidget()">📷 הוסף תמונה</button>
+      <div id="feature-tokens-container"></div>
+      <label class="btn btn-secondary" style="cursor:pointer;display:inline-block">
+        📷 הוסף תמונה
+        <input type="file" id="photo-file-input" accept="image/*" style="display:none">
+      </label>
+      <span id="upload-status" style="margin-right:0.5rem;font-size:0.85rem;color:#666"></span>
       <span class="hint" style="display:block;margin-top:0.4rem">ניתן להוסיף מספר תמונות — ככל שיותר תמונות, כך הזיהוי יהיה מדויק יותר</span>
     </div>
 
@@ -26,36 +31,72 @@
   </form>
 </div>
 
-<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
 <script>
 const CLOUD_NAME = '{{ CLOUDINARY_CLOUD_NAME }}';
 const UPLOAD_PRESET = '{{ CLOUDINARY_UPLOAD_PRESET }}';
+const USER_ID = '{{ session.user_id }}';
+let pendingCount = 0;
 
-function openCatWidget() {
-  cloudinary.openUploadWidget({
-    cloudName: CLOUD_NAME,
-    uploadPreset: UPLOAD_PRESET,
-    sources: ['local', 'camera'],
-    multiple: false,
-    language: 'he',
-    folder: 'catbook/{{ session.user_id }}'
-  }, function(error, result) {
-    if (!error && result && result.event === 'success') {
-      const url = result.info.secure_url;
-      // Add hidden input
-      const input = document.createElement('input');
-      input.type = 'hidden';
-      input.name = 'photo_urls';
-      input.value = url;
-      document.getElementById('photo-urls-container').appendChild(input);
-      // Show thumbnail
-      const img = document.createElement('img');
-      img.src = url;
-      img.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px';
-      document.getElementById('photo-preview').appendChild(img);
-    }
-  });
+document.getElementById('photo-file-input').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  this.value = '';
+  showCropModal(file, uploadCroppedPhoto);
+});
+
+async function uploadCroppedPhoto(imageBlob) {
+  const imgEl = document.createElement('img');
+  imgEl.src = URL.createObjectURL(imageBlob);
+  imgEl.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px;opacity:0.5';
+  const wrapper = document.createElement('div');
+  wrapper.appendChild(imgEl);
+  document.getElementById('photo-preview').appendChild(wrapper);
+
+  pendingCount++;
+  document.getElementById('upload-status').textContent = '⏳ מעלה תמונה...';
+
+  try {
+    const featForm = new FormData();
+    featForm.append('photo', imageBlob, 'photo.jpg');
+
+    const cloudForm = new FormData();
+    cloudForm.append('file', imageBlob, 'photo.jpg');
+    cloudForm.append('upload_preset', UPLOAD_PRESET);
+    cloudForm.append('folder', 'catbook/' + USER_ID);
+
+    const [featRes, cloudRes] = await Promise.all([
+      fetch('/api/extract-features', {method: 'POST', body: featForm}),
+      fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/image/upload', {method: 'POST', body: cloudForm})
+    ]);
+
+    const featData = await featRes.json();
+    const cloudData = await cloudRes.json();
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'hidden'; urlInput.name = 'photo_urls'; urlInput.value = cloudData.secure_url;
+    document.getElementById('photo-urls-container').appendChild(urlInput);
+
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'hidden'; tokenInput.name = 'feature_tokens'; tokenInput.value = featData.token || '';
+    document.getElementById('feature-tokens-container').appendChild(tokenInput);
+
+    imgEl.src = cloudData.secure_url;
+    imgEl.style.opacity = '1';
+  } catch(e) {
+    wrapper.remove();
+    alert('שגיאה בהעלאת תמונה');
+  } finally {
+    pendingCount--;
+    document.getElementById('upload-status').textContent = pendingCount > 0 ? '⏳ מעלה תמונה...' : '';
+  }
 }
+
+document.getElementById('add-cat-form').addEventListener('submit', function(e) {
+  if (pendingCount > 0) {
+    e.preventDefault();
+    alert('אנא המתן לסיום העלאת התמונות');
+  }
+});
 </script>
 
 {% endblock %}

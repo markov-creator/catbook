@@ -70,14 +70,16 @@
     </div>
 
     <div id="add-photo-{{ cat.id }}" class="add-photo-section" style="display:none">
-      <div id="cloudinary-preview-{{ cat.id }}" style="display:none;margin-bottom:0.5rem">
-        <img id="cloudinary-thumb-{{ cat.id }}" src="" style="max-width:100%;max-height:120px;border-radius:8px;">
+      <div id="preview-{{ cat.id }}" style="display:none;margin-bottom:0.5rem">
+        <img id="thumb-{{ cat.id }}" src="" style="max-width:100%;max-height:120px;border-radius:8px;">
       </div>
-      <input type="hidden" id="cloudinary-url-{{ cat.id }}" value="">
+      <input type="file" id="file-input-{{ cat.id }}" accept="image/*" style="display:none"
+             onchange="onFileSelected({{ cat.id }}, this)">
       <button type="button" class="btn" style="width:100%;margin-bottom:0.4rem"
-        onclick="openCloudinaryWidget({{ cat.id }})">📷 בחר תמונה</button>
+        onclick="document.getElementById('file-input-{{ cat.id }}').click()">📷 בחר תמונה</button>
+      <span id="status-{{ cat.id }}" style="display:block;text-align:center;font-size:0.85rem;color:#666;margin-bottom:0.4rem"></span>
       <button type="button" id="upload-btn-{{ cat.id }}" class="btn" style="width:100%;display:none"
-        onclick="uploadPhotoCloudinary({{ cat.id }})">העלה תמונה</button>
+        onclick="uploadPhoto({{ cat.id }})">העלה תמונה</button>
     </div>
 
   </div>
@@ -126,51 +128,103 @@
 </div>
 {% endif %}
 
-<script src="https://upload-widget.cloudinary.com/global/all.js"></script>
 <script>
 const CLOUD_NAME = '{{ CLOUDINARY_CLOUD_NAME }}';
 const UPLOAD_PRESET = '{{ CLOUDINARY_UPLOAD_PRESET }}';
+const USER_ID = '{{ session.user_id }}';
+const catData = {};
 
 function showAddPhoto(catId) {
   const el = document.getElementById('add-photo-' + catId);
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
-function openCloudinaryWidget(catId) {
-  cloudinary.openUploadWidget({
-    cloudName: CLOUD_NAME,
-    uploadPreset: UPLOAD_PRESET,
-    sources: ['local', 'camera'],
-    multiple: false,
-    cropping: false,
-    language: 'he',
-    folder: 'catbook/{{ session.user_id }}'
-  }, function(error, result) {
-    if (!error && result && result.event === 'success') {
-      const url = result.info.secure_url;
-      document.getElementById('cloudinary-url-' + catId).value = url;
-      document.getElementById('cloudinary-thumb-' + catId).src = url;
-      document.getElementById('cloudinary-preview-' + catId).style.display = 'block';
-      document.getElementById('upload-btn-' + catId).style.display = 'block';
-    }
-  });
+function onFileSelected(catId, input) {
+  const file = input.files[0];
+  if (!file) return;
+  showCropModal(file, function(croppedBlob) { uploadCatPhoto(catId, croppedBlob, file); });
 }
 
-async function uploadPhotoCloudinary(catId) {
-  const url = document.getElementById('cloudinary-url-' + catId).value;
-  if (!url) return;
+async function uploadCatPhoto(catId, imageBlob, originalFile) {
+  // Show ORIGINAL image in the main photo grid (for display), use cropped for upload
+  const displayBlob = originalFile || imageBlob;
+  const addSection = document.getElementById('add-photo-' + catId);
+  const catCard = addSection && addSection.closest('.cat-card');
+  let gridPreviewImg = null;
+  if (catCard) {
+    let grid = catCard.querySelector('.cat-photo-grid');
+    const placeholder = catCard.querySelector('.cat-photo-placeholder');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'cat-photo-grid single';
+      if (placeholder) placeholder.replaceWith(grid);
+    }
+    const wrapper = document.createElement('div');
+    wrapper.className = 'photo-wrapper';
+    gridPreviewImg = document.createElement('img');
+    gridPreviewImg.src = URL.createObjectURL(displayBlob);
+    gridPreviewImg.style.opacity = '0.5';
+    gridPreviewImg.alt = '';
+    wrapper.appendChild(gridPreviewImg);
+    grid.appendChild(wrapper);
+    // fix single-photo class
+    const photoCount = grid.querySelectorAll('.photo-wrapper').length;
+    grid.classList.toggle('single', photoCount === 1);
+  }
+
+  const thumb = document.getElementById('thumb-' + catId);
+  const preview = document.getElementById('preview-' + catId);
+  thumb.src = URL.createObjectURL(imageBlob);
+  preview.style.display = 'block';
+
+  const status = document.getElementById('status-' + catId);
+  status.textContent = '⏳ מעלה תמונה...';
+  document.getElementById('upload-btn-' + catId).style.display = 'none';
+
+  try {
+    const featForm = new FormData();
+    featForm.append('photo', imageBlob, 'photo.jpg');  // cropped → for AI features
+
+    const cloudForm = new FormData();
+    cloudForm.append('file', displayBlob, 'photo.jpg');  // original → for display
+    cloudForm.append('upload_preset', UPLOAD_PRESET);
+    cloudForm.append('folder', 'catbook/' + USER_ID);
+
+    const [featRes, cloudRes] = await Promise.all([
+      fetch('/api/extract-features', {method: 'POST', body: featForm}),
+      fetch('https://api.cloudinary.com/v1_1/' + CLOUD_NAME + '/image/upload', {method: 'POST', body: cloudForm})
+    ]);
+
+    const featData = await featRes.json();
+    const cloudData = await cloudRes.json();
+
+    catData[catId] = {url: cloudData.secure_url, token: featData.token || ''};
+    thumb.src = cloudData.secure_url;
+    if (gridPreviewImg) { gridPreviewImg.src = cloudData.secure_url; gridPreviewImg.style.opacity = '1'; }
+    status.textContent = '✓ מוכן להעלאה';
+    document.getElementById('upload-btn-' + catId).style.display = 'block';
+  } catch(e) {
+    if (gridPreviewImg) gridPreviewImg.closest('.photo-wrapper').remove();
+    status.textContent = 'שגיאה בהעלאה';
+  }
+}
+
+async function uploadPhoto(catId) {
+  const data = catData[catId];
+  if (!data) return;
   const btn = document.getElementById('upload-btn-' + catId);
   btn.disabled = true;
   btn.textContent = 'שומר...';
   try {
     const fd = new FormData();
-    fd.append('photo_url', url);
+    fd.append('photo_url', data.url);
+    fd.append('feature_token', data.token);
     const res = await fetch('/cats/' + catId + '/add_photo', {
       method: 'POST', body: fd,
       headers: {'X-Requested-With': 'XMLHttpRequest'}
     });
-    const data = await res.json();
-    if (data.success) location.reload();
+    const resData = await res.json();
+    if (resData.success) location.reload();
     else { alert('שגיאה בשמירה'); btn.disabled = false; btn.textContent = 'העלה תמונה'; }
   } catch(e) { alert('שגיאה'); btn.disabled = false; btn.textContent = 'העלה תמונה'; }
 }

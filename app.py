@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import uuid
 import smtplib
 import threading
 from email.mime.text import MIMEText
@@ -11,6 +12,7 @@ import numpy as np
 from flask import (Flask, flash, g, jsonify, redirect,
                    render_template, request, session, url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 from PIL import Image
 try:
     from pillow_heif import register_heif_opener
@@ -268,6 +270,14 @@ def init_db():
             db.execute('ALTER TABLE cat_photos ADD COLUMN features TEXT')
         except Exception:
             pass
+        # feature_tokens: temp store for features computed before Cloudinary upload
+        db.execute('''CREATE TABLE IF NOT EXISTS feature_tokens (
+            token TEXT PRIMARY KEY,
+            features TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )''')
+        # clean old tokens
+        db.execute("DELETE FROM feature_tokens WHERE created_at < datetime('now', '-1 day')")
         # add model_version table to detect when features need recomputing
         db.execute('''CREATE TABLE IF NOT EXISTS settings
                       (key TEXT PRIMARY KEY, value TEXT)''')
@@ -672,6 +682,31 @@ def cats():
                            similar_notice=similar_notice)
 
 
+@app.route('/api/extract-features', methods=['POST'])
+@login_required
+def extract_features_api():
+    """Receive image, compute DINOv2 features, return token. Used before Cloudinary upload."""
+    file = request.files.get('photo')
+    if not file:
+        return jsonify({'error': 'no file'}), 400
+    ext = os.path.splitext(secure_filename(file.filename or 'photo.jpg'))[1] or '.jpg'
+    temp_path = os.path.join(app.config['UPLOAD_FOLDER'], f"feat_{uuid.uuid4().hex}{ext}")
+    file.save(temp_path)
+    try:
+        feat = extract_features(temp_path)
+        token = uuid.uuid4().hex
+        db = get_db()
+        db.execute('INSERT INTO feature_tokens (token, features, created_at) VALUES (?, ?, datetime("now"))',
+                   (token, json.dumps(feat if isinstance(feat, list) else feat.tolist())))
+        db.commit()
+        return jsonify({'token': token})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 @app.route('/cats/add', methods=['GET', 'POST'])
 @login_required
 def add_cat():
@@ -688,11 +723,21 @@ def add_cat():
         db.commit()
 
         all_feats = []
-        # Accept Cloudinary URLs (direct browser upload)
-        for photo_url_val in request.form.getlist('photo_urls'):
-            if photo_url_val:
-                db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
-                           (cat_id, photo_url_val, None))
+        # Accept Cloudinary URLs with optional feature tokens
+        photo_urls = request.form.getlist('photo_urls')
+        feature_tokens = request.form.getlist('feature_tokens')
+        for photo_url_val, token in zip(photo_urls, feature_tokens + [''] * len(photo_urls)):
+            if not photo_url_val:
+                continue
+            feat_json = None
+            if token:
+                tok_row = db.execute('SELECT features FROM feature_tokens WHERE token=?', (token,)).fetchone()
+                if tok_row:
+                    feat_json = tok_row['features']
+                    all_feats.append(json.loads(feat_json))
+                    db.execute('DELETE FROM feature_tokens WHERE token=?', (token,))
+            db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
+                       (cat_id, photo_url_val, feat_json))
         # Also accept legacy file uploads (for backward compatibility)
         for file in request.files.getlist('photos'):
             url, pil_img = save_photo(file, cat_id)
@@ -738,8 +783,15 @@ def add_photo(cat_id):
     # Accept Cloudinary URL (direct browser upload)
     cloudinary_url = request.form.get('photo_url', '')
     if cloudinary_url and cloudinary_url.startswith('http'):
+        feat_json = None
+        token = request.form.get('feature_token', '')
+        if token:
+            tok_row = db.execute('SELECT features FROM feature_tokens WHERE token=?', (token,)).fetchone()
+            if tok_row:
+                feat_json = tok_row['features']
+                db.execute('DELETE FROM feature_tokens WHERE token=?', (token,))
         db.execute('INSERT INTO cat_photos (cat_id, filename, features) VALUES (?, ?, ?)',
-                   (cat_id, cloudinary_url, None))
+                   (cat_id, cloudinary_url, feat_json))
         db.commit()
         return jsonify({'success': True, 'filename': cloudinary_url})
 
@@ -1073,7 +1125,9 @@ def identify():
                     scores.append(cosine_sim(query_feat, feat))
 
             if scores:
-                score = 0.5 * (sum(scores) / len(scores)) + 0.5 * max(scores)
+                k = min(3, len(scores))
+                top_k = sorted(scores, reverse=True)[:k]
+                score = sum(top_k) / k
                 is_mine = cat['user_id'] == uid
                 already_friends = False
                 if not is_mine:

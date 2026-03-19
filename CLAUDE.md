@@ -32,7 +32,7 @@ Then click **Reload** in the Web tab.
 > ⚠️ Do NOT use `git pull` — it fails when `dinov2_small.onnx` is present (untracked, blocks merge). Use `git checkout origin/master -- <files>` instead.
 
 ## Architecture
-Single-file Flask app (`app.py`, ~2000 lines) with SQLite. All routes, DB init, and helpers are in `app.py`.
+Single-file Flask app (`app.py`, ~2500 lines) with SQLite. All routes, DB init, and helpers are in `app.py`.
 
 **Request flow:**
 1. `before_request` → `inject_nav_counts()` injects `pending_requests`, `unread_messages`, `unread_notifs` into every template via `g`
@@ -69,9 +69,12 @@ Triggered on: friend request received, cat identified (owner notified), post sen
 - Admin session: `session['is_admin']` (separate from `session['user_id']`)
 - Notifications: types are `identified`, `similar`, `tree_share`
 - Username inputs use `dir="auto"`; password inputs use `dir="ltr"`
+- After login → redirects to `index` (home page), not `cats`
+- Cloudinary widget uploads use `folder: 'catbook/{{ session.user_id }}'` to organize per user
+- `cat_photos.features` is NULL for Cloudinary-uploaded photos (no server-side processing possible on free tier) — only photos with features can be used for identification
 
 ## Database Tables
-`users` (with `email`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`
+`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`
 
 Schema initialized in `init_db()`. Migrations run automatically on startup.
 
