@@ -2566,8 +2566,23 @@ def street_cat_add_sighting(sc_id):
     photo = request.form.get('photo', '').strip() or None
     features_json = request.form.get('features_json', '').strip() or None
 
+    # Handle direct file upload from the add-sighting form
+    uploaded_file = request.files.get('photo_file')
+    if uploaded_file and uploaded_file.filename:
+        import uuid
+        ext = uploaded_file.filename.rsplit('.', 1)[-1].lower() if '.' in uploaded_file.filename else 'jpg'
+        temp_name = f'sighting_{uid}_{uuid.uuid4().hex[:8]}.{ext}'
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_name)
+        uploaded_file.save(temp_path)
+        cloud_url = upload_to_cloudinary(temp_path, folder='catbook/street_cats')
+        if cloud_url:
+            photo = cloud_url
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
     # Upload temp photo to Cloudinary for permanent storage
-    if photo and not photo.startswith('http'):
+    elif photo and not photo.startswith('http'):
         temp_path = os.path.join(app.config['UPLOAD_FOLDER'], photo)
         cloud_url = upload_to_cloudinary(temp_path)
         if cloud_url:

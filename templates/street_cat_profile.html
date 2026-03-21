@@ -31,7 +31,7 @@
   <!-- Add sighting form -->
   <div id="add-sighting-form" style="display:none" class="card" style="margin-bottom:1rem;padding:1rem">
     <h3 style="margin-top:0">הוסף הופעה חדשה</h3>
-    <form method="POST" action="{{ url_for('street_cat_add_sighting', sc_id=sc.id) }}">
+    <form method="POST" action="{{ url_for('street_cat_add_sighting', sc_id=sc.id) }}" enctype="multipart/form-data">
       <div style="margin-bottom:0.7rem">
         <label>📍 מיקום</label>
         <input type="text" name="location" placeholder="רחוב / שכונה" style="width:100%;box-sizing:border-box">
@@ -54,6 +54,10 @@
       <div style="margin-bottom:0.7rem">
         <label>תיאור (אופציונלי)</label>
         <textarea name="caption" rows="2" style="width:100%;box-sizing:border-box"></textarea>
+      </div>
+      <div style="margin-bottom:0.7rem">
+        <label>📷 תמונה (אופציונלי)</label>
+        <input type="file" name="photo_file" accept="image/*" style="width:100%;box-sizing:border-box">
       </div>
       <button type="submit" class="btn-primary">שמור הופעה</button>
     </form>
