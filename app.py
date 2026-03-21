@@ -80,6 +80,7 @@ def upload_to_cloudinary(file_path, folder='catbook/street_cats'):
         return data.get('secure_url')
     except Exception as e:
         print(f'upload_to_cloudinary error: {e}')
+        upload_to_cloudinary.last_error = str(e)
         return None
 
 
@@ -2577,7 +2578,8 @@ def street_cat_add_sighting(sc_id):
         if cloud_url:
             photo = cloud_url
         else:
-            flash('העלאת התמונה נכשלה — ההופעה נשמרה ללא תמונה', 'warning')
+            err = getattr(upload_to_cloudinary, 'last_error', '')
+            flash(f'העלאת התמונה נכשלה — {err}', 'warning')
         try:
             os.remove(temp_path)
         except Exception:
