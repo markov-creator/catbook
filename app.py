@@ -2569,7 +2569,6 @@ def street_cat_add_sighting(sc_id):
     # Handle direct file upload from the add-sighting form
     uploaded_file = request.files.get('photo_file')
     if uploaded_file and uploaded_file.filename:
-        import uuid
         ext = uploaded_file.filename.rsplit('.', 1)[-1].lower() if '.' in uploaded_file.filename else 'jpg'
         temp_name = f'sighting_{uid}_{uuid.uuid4().hex[:8]}.{ext}'
         temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_name)
@@ -2577,6 +2576,8 @@ def street_cat_add_sighting(sc_id):
         cloud_url = upload_to_cloudinary(temp_path, folder='catbook/street_cats')
         if cloud_url:
             photo = cloud_url
+        else:
+            flash('העלאת התמונה נכשלה — ההופעה נשמרה ללא תמונה', 'warning')
         try:
             os.remove(temp_path)
         except Exception:
