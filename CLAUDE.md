@@ -66,11 +66,19 @@ All cat photo uploads go through a crop modal before uploading:
 - Upload preset: `catbook_upload` (`CLOUDINARY_UPLOAD_PRESET` env var) — unsigned
 - **`photo_url(filename)`** — Jinja2 global: if value starts with `http` → Cloudinary URL as-is; otherwise → `/static/uploads/<filename>` (legacy)
 - `static/uploads/` holds temp files from identify sessions (named `temp_<uid>_<hash>.<ext>`)
+- **`upload_to_cloudinary(file_path, folder)`** — server-side signed upload (used for street cat sighting photos uploaded directly from the profile form). Requires `CLOUDINARY_API_KEY` + `CLOUDINARY_API_SECRET`.
 
 ## Email
-Uses `smtplib`. `send_email(to, subject, body)` runs in a background thread — silently skips if `MAIL_USER`/`MAIL_PASSWORD` not set.
+Uses SendGrid HTTP API (via `urllib.request`). `send_email(to, subject, body)` runs in a background thread — silently skips if `SENDGRID_API_KEY`/`MAIL_SENDER` not set. Sender must be verified as a Single Sender in SendGrid dashboard.
 
-> ⚠️ PythonAnywhere free tier blocks outbound SMTP (ports 465/587). Email works locally but **not on the server**. Planned fix: SendGrid or Mailgun HTTP API.
+## Street Cats
+Community tracking system for unowned street cats (`/street-cats`).
+- `street_cats` table: one row per cat, with `nickname`, `auto_number`, `created_by`, `adopted_by_cat_id`
+- `street_cat_sightings` table: links to a `posts` row (for photo/caption) + sighting metadata (location, health, fed, sighted_at)
+- On identify, results are checked against street cat sightings (threshold 0.55). Similarity ≥ 0.85 auto-links the identified cat.
+- On new sighting, notifications sent to all previous reporters (not just creator).
+- Delete permission: first reporter (`created_by`) or admin only.
+- Sighting photos uploaded directly from profile page go through server-side `upload_to_cloudinary()`.
 
 ## Real-time Nav Badges
 `/api/nav-counts` returns `{pending_requests, unread_messages, unread_notifs}` as JSON.
@@ -80,13 +88,13 @@ Uses `smtplib`. `send_email(to, subject, body)` runs in a background thread — 
 - All UI is Hebrew RTL; font is Rubik (Google Fonts)
 - Flash categories: `'warning'` → yellow style; `'admin_*'` → admin dashboard only
 - Admin session: `session['is_admin']` (separate from `session['user_id']`)
-- Notification types: `identified`, `similar`, `tree_share`
+- Notification types: `identified`, `similar`, `tree_share`, `street_cat_sighting`
 - Username inputs use `dir="auto"`; password inputs use `dir="ltr"`
 - After login → redirects to `index` (home page)
 - Cloudinary uploads use `folder: 'catbook/{{ session.user_id }}'`
 
 ## Database Tables
-`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`, `feature_tokens`
+`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications` (with `message`, `related_id`), `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`, `feature_tokens`, `street_cats`, `street_cat_sightings`
 
 Schema initialized in `init_db()`. Migrations run automatically on startup.
 
@@ -117,6 +125,6 @@ CLOUDINARY_CLOUD_NAME=ddo0urbwv
 CLOUDINARY_UPLOAD_PRESET=catbook_upload
 CLOUDINARY_API_KEY=...
 CLOUDINARY_API_SECRET=...
-MAIL_USER=...@gmail.com
-MAIL_PASSWORD=...   # Gmail App Password (16 chars)
+SENDGRID_API_KEY=...
+MAIL_SENDER=...@gmail.com
 ```
