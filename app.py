@@ -388,6 +388,14 @@ def init_db():
             db.execute('ALTER TABLE notifications ADD COLUMN tree_id INTEGER')
         except Exception:
             pass
+        try:
+            db.execute('ALTER TABLE notifications ADD COLUMN message TEXT')
+        except Exception:
+            pass
+        try:
+            db.execute('ALTER TABLE notifications ADD COLUMN related_id INTEGER')
+        except Exception:
+            pass
         db.execute('''CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender_id INTEGER NOT NULL,
