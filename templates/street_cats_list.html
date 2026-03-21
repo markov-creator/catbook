@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container" style="max-width:680px;margin:0 auto;padding:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h2 style="margin:0;color:#6a0dad">🐾 חתולי רחוב</h2>
+    <a href="{{ url_for('identify') }}" class="btn-primary" style="text-decoration:none">+ דווח על חתול</a>
+  </div>
+
+  {% if not cats %}
+  <div class="card" style="text-align:center;padding:2rem;color:#888">
+    <div style="font-size:3rem">🐾</div>
+    <p>אין חתולי רחוב מתועדים עדיין</p>
+  </div>
+  {% endif %}
+
+  {% for sc in cats %}
+  <a href="{{ url_for('street_cat_profile', sc_id=sc.id) }}" style="text-decoration:none;color:inherit">
+    <div class="card" style="margin-bottom:0.8rem;padding:1rem;display:flex;gap:1rem;align-items:center">
+      {% if sc.last_photo %}
+      <img src="{{ photo_url(sc.last_photo) }}" style="width:70px;height:70px;object-fit:cover;border-radius:10px;flex-shrink:0">
+      {% else %}
+      <div style="width:70px;height:70px;background:#f0e6ff;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:2rem;flex-shrink:0">🐾</div>
+      {% endif %}
+      <div>
+        <div style="font-weight:bold;font-size:1.1rem">{{ sc.nickname or ('חתול רחוב #' + sc.auto_number|string) }}</div>
+        <div style="color:#888;font-size:0.85rem">{{ sc.sighting_count }} הופעות</div>
+        {% if sc.last_seen %}
+        <div style="color:#aaa;font-size:0.8rem">נראה לאחרונה: {{ sc.last_seen[:10] }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

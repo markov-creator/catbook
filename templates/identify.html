@@ -20,9 +20,10 @@
       <div id="section-upload">
         <div class="form-group">
           <label>תמונה לזיהוי</label>
-          <div class="file-input-wrapper" onclick="document.getElementById('identify-input').click()">
+          <div class="file-input-wrapper" onclick="document.getElementById('identify-input').click()"
+               style="background:#0077cc;color:#fff;border-color:#0077cc;font-weight:bold">
             <input type="file" id="identify-input" name="photo" accept="image/*">
-            <div class="file-input-label">לחץ לבחירת תמונה</div>
+            <div class="file-input-label" style="color:#fff">📷 לחץ לבחירת תמונה</div>
           </div>
         </div>
         <div class="identify-preview" id="identify-preview"></div>
@@ -140,6 +141,53 @@
       </div>
       {% endif %}
 
+      <!-- Street cats similar results -->
+      {% if result.street_matched %}
+      <div style="margin-top:1.2rem;border-top:1px solid #e8d5f7;padding-top:1rem">
+        <div style="font-weight:bold;margin-bottom:0.7rem;color:#3d006e">🐾 חתולי רחוב דומים</div>
+        {% for sc in result.street_matched %}
+        <div style="background:#faf5ff;border-radius:10px;padding:0.8rem;margin-bottom:0.7rem;display:flex;gap:0.8rem;align-items:center">
+          {% if sc.photo %}
+          <img src="{{ photo_url(sc.photo) }}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;flex-shrink:0">
+          {% endif %}
+          <div style="flex:1">
+            <div style="font-weight:bold">{{ sc.nickname or ('חתול רחוב #' + sc.auto_number|string) }}</div>
+            {% if sc.location_text %}<div style="font-size:0.85rem;color:#666">📍 {{ sc.location_text }}</div>{% endif %}
+            {% if sc.sighted_at %}<div style="font-size:0.8rem;color:#999">{{ sc.sighted_at[:10].replace('T',' ') }}</div>{% endif %}
+            {% if sc.auto_link %}
+            <div style="font-size:0.8rem;color:#2a7a2a;margin-top:0.2rem">✅ זיהוי אוטומטי (דמיון גבוה)</div>
+            {% endif %}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:0.4rem">
+            <a href="{{ url_for('street_cat_profile', sc_id=sc.sc_id) }}" class="btn btn-secondary" style="font-size:0.85rem;text-decoration:none;text-align:center">צפה</a>
+            <button type="button" class="btn" style="font-size:0.85rem"
+                    onclick="document.getElementById('sighting-form-{{ sc.sc_id }}').style.display='block';this.style.display='none'">+ הופעה</button>
+          </div>
+        </div>
+        <div id="sighting-form-{{ sc.sc_id }}" style="display:none;background:#f0e6ff;border-radius:10px;padding:0.8rem;margin-bottom:0.7rem">
+          <form method="POST" action="{{ url_for('street_cat_add_sighting', sc_id=sc.sc_id) }}">
+            <input type="hidden" name="photo" value="{{ result.temp_filename }}">
+            <input type="hidden" name="features_json" value="{{ result.query_features or '' }}">
+            <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem">
+              <input type="text" name="location" placeholder="📍 מיקום" style="flex:1;min-width:140px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
+              <input type="datetime-local" name="sighted_at" style="flex:1;min-width:160px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
+              <select name="health_status" style="flex:1;min-width:120px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
+                <option value="בריא">✅ בריא</option>
+                <option value="פצוע">🤕 פצוע</option>
+                <option value="חולה">🤒 חולה</option>
+              </select>
+              <label style="white-space:nowrap"><input type="checkbox" name="fed"> 🍽️ קיבל אוכל</label>
+            </div>
+            <input type="text" name="caption" placeholder="תיאור (אופציונלי)" style="width:100%;box-sizing:border-box;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit;margin-bottom:0.5rem">
+            <button type="submit" class="btn" style="width:100%">שמור הופעה</button>
+          </form>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
       {% if result.temp_filename %}
       <div style="margin-top:1.2rem;border-top:1px solid #e8d5f7;padding-top:1rem">
         <div style="font-weight:bold;margin-bottom:0.5rem;color:#3d006e">📸 פרסם תמונה זו כפוסט</div>
@@ -159,6 +207,33 @@
                  style="width:100%;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit;font-size:.95rem;margin-bottom:0.5rem">
           <button type="submit" class="btn" style="width:100%">פרסם כפוסט</button>
         </form>
+
+        <!-- Report as new street cat -->
+        <div style="margin-top:0.8rem;border-top:1px solid #f0e6ff;padding-top:0.8rem">
+          <button onclick="document.getElementById('street-cat-form').style.display=document.getElementById('street-cat-form').style.display==='none'?'block':'none'"
+                  class="btn" style="width:100%;background:#0077cc;color:#fff">🐾 דווח כחתול רחוב חדש</button>
+          <div id="street-cat-form" style="display:none;margin-top:0.8rem">
+            <form method="POST" action="{{ url_for('street_cat_create') }}">
+              <input type="hidden" name="photo" value="{{ result.temp_filename }}">
+              <input type="hidden" name="features_json" value="{{ result.query_features or '' }}">
+              <input type="text" name="nickname" placeholder="שם הכינוי (אופציונלי)"
+                     style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+              <input type="text" name="location" placeholder="📍 מיקום (רחוב/שכונה)"
+                     style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+              <input type="datetime-local" name="sighted_at"
+                     style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+              <select name="health_status" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+                <option value="בריא">✅ בריא</option>
+                <option value="פצוע">🤕 פצוע</option>
+                <option value="חולה">🤒 חולה</option>
+              </select>
+              <label style="display:block;margin-bottom:0.5rem"><input type="checkbox" name="fed"> 🍽️ קיבל אוכל</label>
+              <input type="text" name="caption" placeholder="תיאור (אופציונלי)"
+                     style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+              <button type="submit" class="btn" style="width:100%">צור חתול רחוב</button>
+            </form>
+          </div>
+        </div>
       </div>
       {% endif %}
     </div>

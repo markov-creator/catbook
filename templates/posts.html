@@ -11,6 +11,7 @@
   <a href="{{ url_for('posts', friends='1') }}" class="post-filter-btn {% if show_friends %}post-filter-btn--active{% endif %}">🤝 חברים</a>
   <a href="{{ url_for('posts', purpose='share') }}" class="post-filter-btn {% if filter_purpose == 'share' %}post-filter-btn--active{% endif %}">פרסום חתולים</a>
   <a href="{{ url_for('posts', purpose='adoption') }}" class="post-filter-btn {% if filter_purpose == 'adoption' %}post-filter-btn--active{% endif %}">🏠 לאימוץ</a>
+  <a href="{{ url_for('posts', purpose='street_cat') }}" class="post-filter-btn {% if filter_purpose == 'street_cat' %}post-filter-btn--active{% endif %}">🐾 חתולי רחוב</a>
   <a href="{{ url_for('posts', saved='1') }}" class="post-filter-btn {% if show_saved %}post-filter-btn--active{% endif %}">🔖 שמורים</a>
 </div>
 
@@ -24,6 +25,7 @@
         {% if p.cat_name %}<span class="post-catname">— {{ p.cat_name }}</span>{% endif %}
         <span class="post-time">{{ p.created_at }}</span>
         {% if p.purpose == 'adoption' %}<span class="post-purpose-badge">🏠 לאימוץ</span>{% endif %}
+        {% if p.purpose == 'street_cat' %}<a href="{{ url_for('street_cats_list') }}" class="post-purpose-badge" style="background:#e8f4fd;color:#0066cc;text-decoration:none">🐾 חתול רחוב</a>{% endif %}
         {% if p.visibility == 'friends' %}<span class="post-visibility">חברים בלבד</span>{% endif %}
       </div>
       <div style="display:flex;gap:0.25rem;align-items:center">

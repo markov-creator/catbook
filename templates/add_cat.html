@@ -41,10 +41,10 @@ document.getElementById('photo-file-input').addEventListener('change', function(
   const file = this.files[0];
   if (!file) return;
   this.value = '';
-  showCropModal(file, uploadCroppedPhoto);
+  showCropModal(file, function(croppedBlob) { uploadCroppedPhoto(croppedBlob, file); });
 });
 
-async function uploadCroppedPhoto(imageBlob) {
+async function uploadCroppedPhoto(imageBlob, originalFile) {
   const imgEl = document.createElement('img');
   imgEl.src = URL.createObjectURL(imageBlob);
   imgEl.style.cssText = 'width:80px;height:80px;object-fit:cover;border-radius:8px;opacity:0.5';
@@ -60,7 +60,7 @@ async function uploadCroppedPhoto(imageBlob) {
     featForm.append('photo', imageBlob, 'photo.jpg');
 
     const cloudForm = new FormData();
-    cloudForm.append('file', imageBlob, 'photo.jpg');
+    cloudForm.append('file', originalFile || imageBlob, 'photo.jpg');  // original → for display
     cloudForm.append('upload_preset', UPLOAD_PRESET);
     cloudForm.append('folder', 'catbook/' + USER_ID);
 

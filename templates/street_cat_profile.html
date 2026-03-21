@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container" style="max-width:680px;margin:0 auto;padding:1rem">
+
+  <!-- Header -->
+  <div class="card" style="text-align:center;padding:1.5rem;margin-bottom:1rem">
+    <div style="font-size:2.5rem">🐾</div>
+    <h2 style="margin:0.3rem 0;color:#6a0dad">
+      {{ sc.nickname or ('חתול רחוב #' + sc.auto_number|string) }}
+    </h2>
+    <div style="color:#888;font-size:0.9rem">{{ sightings|length }} הופעות מתועדות</div>
+    {% if session.user_id == sc.created_by or session.is_admin %}
+    <form method="POST" action="{{ url_for('street_cat_delete', sc_id=sc.id) }}" style="margin-top:0.5rem"
+          onsubmit="return confirm('למחוק את החתול ואת כל ההופעות שלו?')">
+      <button type="submit" style="background:none;border:none;color:#c00;cursor:pointer;font-size:0.85rem">🗑️ מחק חתול רחוב</button>
+    </form>
+    {% endif %}
+    {% if adopted_cat %}
+    <div style="margin-top:0.5rem;background:#f0e6ff;border-radius:8px;padding:0.4rem 0.8rem;display:inline-block">
+      🏠 אומץ — <a href="{{ url_for('cat_detail', cat_id=adopted_cat.id) }}">{{ adopted_cat.name }}</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Add sighting button -->
+  <div style="margin-bottom:1rem;text-align:center">
+    <button onclick="document.getElementById('add-sighting-form').style.display='block';this.style.display='none'"
+            class="btn-primary">+ הוסף הופעה</button>
+  </div>
+
+  <!-- Add sighting form -->
+  <div id="add-sighting-form" style="display:none" class="card" style="margin-bottom:1rem;padding:1rem">
+    <h3 style="margin-top:0">הוסף הופעה חדשה</h3>
+    <form method="POST" action="{{ url_for('street_cat_add_sighting', sc_id=sc.id) }}">
+      <div style="margin-bottom:0.7rem">
+        <label>📍 מיקום</label>
+        <input type="text" name="location" placeholder="רחוב / שכונה" style="width:100%;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:0.7rem">
+        <label>🕐 תאריך ושעה</label>
+        <input type="datetime-local" name="sighted_at" style="width:100%;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:0.7rem">
+        <label>🏥 מצב בריאותי</label>
+        <select name="health_status" style="width:100%;box-sizing:border-box">
+          <option value="בריא">בריא</option>
+          <option value="פצוע">פצוע</option>
+          <option value="חולה">חולה</option>
+        </select>
+      </div>
+      <div style="margin-bottom:0.7rem">
+        <label><input type="checkbox" name="fed"> 🍽️ קיבל אוכל</label>
+      </div>
+      <div style="margin-bottom:0.7rem">
+        <label>תיאור (אופציונלי)</label>
+        <textarea name="caption" rows="2" style="width:100%;box-sizing:border-box"></textarea>
+      </div>
+      <button type="submit" class="btn-primary">שמור הופעה</button>
+    </form>
+  </div>
+
+  <!-- Adopt form (if not adopted) -->
+  {% if not adopted_cat %}
+  <details style="margin-bottom:1rem;background:#fff;border-radius:12px;padding:1rem;box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+    <summary style="cursor:pointer;color:#6a0dad">🏠 זהו החתול שלי — קשר לפרופיל</summary>
+    {% if my_cats %}
+    <form method="POST" action="{{ url_for('street_cat_adopt', sc_id=sc.id) }}" style="margin-top:0.8rem">
+      <select name="cat_id" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem">
+        {% for cat in my_cats %}
+        <option value="{{ cat.id }}">{{ cat.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn-primary">קשר</button>
+    </form>
+    {% else %}
+    <p style="color:#888;margin-top:0.5rem">אין לך חתולים רשומים עדיין</p>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  <!-- Timeline -->
+  <h3 style="color:#6a0dad">ציר זמן הופעות</h3>
+  {% for s in sightings %}
+  <div class="card" style="margin-bottom:1rem;padding:1rem;border-right:4px solid #6a0dad">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:0.5rem">
+      <div>
+        <span style="font-weight:bold">{{ s.username }}</span>
+        <span style="color:#888;font-size:0.85rem;margin-right:0.5rem">
+          {{ s.sighted_at[:16].replace('T', ' ') if s.sighted_at else '' }}
+        </span>
+      </div>
+      <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+        {% if s.health_status == 'פצוע' %}<span style="background:#ffe0e0;color:#c00;border-radius:12px;padding:2px 8px;font-size:0.8rem">🤕 פצוע</span>
+        {% elif s.health_status == 'חולה' %}<span style="background:#fff3cd;color:#856404;border-radius:12px;padding:2px 8px;font-size:0.8rem">🤒 חולה</span>
+        {% else %}<span style="background:#e0f7e0;color:#2a7a2a;border-radius:12px;padding:2px 8px;font-size:0.8rem">✅ בריא</span>{% endif %}
+        {% if s.fed %}<span style="background:#e8f4fd;color:#0066cc;border-radius:12px;padding:2px 8px;font-size:0.8rem">🍽️ אכל</span>{% endif %}
+      </div>
+    </div>
+    {% if s.location_text %}
+    <div style="color:#555;font-size:0.9rem;margin-top:0.3rem">📍 {{ s.location_text }}</div>
+    {% endif %}
+    {% if s.caption %}
+    <div style="margin-top:0.3rem;font-style:italic">"{{ s.caption }}"</div>
+    {% endif %}
+    {% if s.photo %}
+    <img src="{{ photo_url(s.photo) }}" style="width:100%;max-height:300px;object-fit:cover;border-radius:8px;margin-top:0.5rem">
+    {% endif %}
+  </div>
+  {% else %}
+  <div style="text-align:center;color:#888;padding:2rem">אין הופעות עדיין</div>
+  {% endfor %}
+
+</div>
+{% endblock %}

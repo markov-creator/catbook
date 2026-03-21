@@ -2,10 +2,12 @@ import os
 import json
 import sqlite3
 import uuid
-import smtplib
 import threading
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import hashlib
+import time
+import urllib.request
+from datetime import datetime
+import urllib.parse
 from functools import wraps
 
 import numpy as np
@@ -38,26 +40,78 @@ ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 
 CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', 'demo')
 CLOUDINARY_UPLOAD_PRESET = os.environ.get('CLOUDINARY_UPLOAD_PRESET', 'ml_default')
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '')
 
-MAIL_USER = os.environ.get('MAIL_USER', '')
-MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD', '')
+
+def upload_to_cloudinary(file_path, folder='catbook/street_cats'):
+    """Upload a local file to Cloudinary using signed upload. Returns secure_url or None."""
+    if not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET or not CLOUDINARY_CLOUD_NAME:
+        return None
+    try:
+        ts = str(int(time.time()))
+        params_to_sign = f'folder={folder}&timestamp={ts}'
+        signature = hashlib.sha256((params_to_sign + CLOUDINARY_API_SECRET).encode()).hexdigest()
+        boundary = uuid.uuid4().hex
+        with open(file_path, 'rb') as f:
+            file_data = f.read()
+        ext = os.path.splitext(file_path)[1] or '.jpg'
+        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else 'image/png' if ext == '.png' else 'application/octet-stream'
+
+        def field(name, value):
+            return (f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n').encode()
+
+        body = (
+            field('api_key', CLOUDINARY_API_KEY) +
+            field('timestamp', ts) +
+            field('folder', folder) +
+            field('signature', signature) +
+            f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="photo{ext}"\r\nContent-Type: {mime}\r\n\r\n'.encode() +
+            file_data + b'\r\n' +
+            f'--{boundary}--\r\n'.encode()
+        )
+        req = urllib.request.Request(
+            f'https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload',
+            data=body,
+            headers={'Content-Type': f'multipart/form-data; boundary={boundary}'}
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        return data.get('secure_url')
+    except Exception as e:
+        print(f'upload_to_cloudinary error: {e}')
+        return None
+
+
+SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', '')
+MAIL_SENDER = os.environ.get('MAIL_SENDER', '')
 
 
 def send_email(to, subject, body):
-    """Send email in a background thread. Silently skips if not configured."""
-    if not MAIL_USER or not MAIL_PASSWORD or not to:
+    """Send email via SendGrid HTTP API in a background thread."""
+    if not SENDGRID_API_KEY or not MAIL_SENDER or not to:
         return
 
     def _send():
         try:
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = f'CatBook 🐱 <{MAIL_USER}>'
-            msg['To'] = to
-            msg.attach(MIMEText(body, 'html', 'utf-8'))
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-                smtp.login(MAIL_USER, MAIL_PASSWORD)
-                smtp.sendmail(MAIL_USER, to, msg.as_string())
+            payload = json.dumps({
+                'personalizations': [{'to': [{'email': to}]}],
+                'from': {'email': MAIL_SENDER, 'name': 'CatBook'},
+                'subject': subject,
+                'content': [{'type': 'text/html', 'value': body}]
+            }).encode('utf-8')
+            req = urllib.request.Request(
+                'https://api.sendgrid.com/v3/mail/send',
+                data=payload,
+                headers={
+                    'Authorization': f'Bearer {SENDGRID_API_KEY}',
+                    'Content-Type': 'application/json'
+                }
+            )
+            resp = urllib.request.urlopen(req)
+            print(f'send_email OK: {resp.status} → {to}')
+        except urllib.error.HTTPError as e:
+            print(f'send_email HTTP error: {e.code} {e.read().decode()}')
         except Exception as e:
             print(f'send_email error: {e}')
 
@@ -466,6 +520,30 @@ def init_db():
             FOREIGN KEY (shared_with_id) REFERENCES users(id),
             UNIQUE(tree_id, shared_with_id)
         )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS street_cats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT,
+            auto_number INTEGER NOT NULL,
+            created_by INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            adopted_by_cat_id INTEGER,
+            FOREIGN KEY (created_by) REFERENCES users(id),
+            FOREIGN KEY (adopted_by_cat_id) REFERENCES cats(id)
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS street_cat_sightings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            street_cat_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            location_text TEXT,
+            fed INTEGER NOT NULL DEFAULT 0,
+            health_status TEXT NOT NULL DEFAULT 'בריא',
+            sighted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            features TEXT,
+            FOREIGN KEY (street_cat_id) REFERENCES street_cats(id),
+            FOREIGN KEY (post_id) REFERENCES posts(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )''')
         db.commit()
 
 
@@ -680,6 +758,23 @@ def cats():
     similar_notice = session.pop('similar_notice', None)
     return render_template('cats.html', cats=cats_data, friends_cats=friends_cats,
                            similar_notice=similar_notice)
+
+
+@app.route('/api/nav-counts')
+@login_required
+def api_nav_counts():
+    db = get_db()
+    uid = session['user_id']
+    pending = db.execute(
+        "SELECT COUNT(*) as cnt FROM friendships WHERE receiver_id=? AND status='pending'", (uid,)
+    ).fetchone()['cnt']
+    unread = db.execute(
+        "SELECT COUNT(*) as cnt FROM messages WHERE receiver_id=? AND is_read=0", (uid,)
+    ).fetchone()['cnt']
+    unread_notifs = db.execute(
+        "SELECT COUNT(*) as cnt FROM notifications WHERE user_id=? AND is_read=0", (uid,)
+    ).fetchone()['cnt']
+    return jsonify({'pending_requests': pending, 'unread_messages': unread, 'unread_notifs': unread_notifs})
 
 
 @app.route('/api/extract-features', methods=['POST'])
@@ -1078,7 +1173,7 @@ def identify():
                 flash('נא לבחור תמונה')
                 return render_template('identify.html', result=None, my_photos=my_photos)
 
-            # Save temp copy so user can add it to the identified cat later
+            # Save original (uncropped) as temp — used for display in posts/street cats
             ext = os.path.splitext(file.filename)[1].lower()
             temp_filename = f'temp_{session["user_id"]}_{os.urandom(6).hex()}{ext}'
             temp_path = os.path.join(app.config['UPLOAD_FOLDER'], temp_filename)
@@ -1086,23 +1181,25 @@ def identify():
             img.thumbnail((900, 900), Image.LANCZOS)
             img.save(temp_path)
 
-            try:
-                query_feat = extract_features(temp_path)
-            except Exception as e:
-                os.remove(temp_path)
-                flash(f'שגיאה בעיבוד התמונה: {e}')
-                return render_template('identify.html', result=None, my_photos=my_photos)
+            # Use pre-extracted features from cropped image if provided
+            features_token = request.form.get('features_token', '').strip()
+            tok_row = db.execute('SELECT features FROM feature_tokens WHERE token=?', (features_token,)).fetchone() if features_token else None
+            if tok_row and tok_row['features']:
+                query_feat = np.array(json.loads(tok_row['features']), dtype=np.float32)
+                db.execute('DELETE FROM feature_tokens WHERE token=?', (features_token,))
+                db.commit()
+            else:
+                try:
+                    query_feat = extract_features(temp_path)
+                except Exception as e:
+                    os.remove(temp_path)
+                    flash(f'שגיאה בעיבוד התמונה: {e}')
+                    return render_template('identify.html', result=None, my_photos=my_photos)
 
         # All cats from all users
         cat_rows = db.execute(
             'SELECT c.id, c.name, c.user_id, u.username FROM cats c JOIN users u ON u.id=c.user_id'
         ).fetchall()
-
-        if not cat_rows:
-            if not existing_photo_id:
-                os.remove(temp_path)
-            flash('אין חתולים רשומים באתר')
-            return render_template('identify.html', result=None, my_photos=my_photos)
 
         MATCH_THRESHOLD = 0.55
         few_photos_warning = False
@@ -1196,6 +1293,45 @@ def identify():
         else:
             session['identify_temp_url'] = temp_filename
             result = {'identified': [], 'few_photos': False, 'temp_filename': temp_filename}
+
+        # ── Check against street cats ──
+        street_sightings = db.execute('''
+            SELECT s.id, s.street_cat_id, s.features, s.location_text, s.sighted_at,
+                   sc.nickname, sc.auto_number,
+                   p.photo
+            FROM street_cat_sightings s
+            JOIN street_cats sc ON sc.id = s.street_cat_id
+            JOIN posts p ON p.id = s.post_id
+            WHERE s.features IS NOT NULL
+        ''').fetchall()
+
+        sc_scores = {}  # sc_id → best score + info
+        for row in street_sightings:
+            try:
+                feat = np.array(json.loads(row['features']), dtype=np.float32)
+                score = cosine_sim(query_feat, feat)
+            except Exception:
+                continue
+            sc_id = row['street_cat_id']
+            if sc_id not in sc_scores or score > sc_scores[sc_id]['score']:
+                sc_scores[sc_id] = {
+                    'sc_id': sc_id,
+                    'score': score,
+                    'nickname': row['nickname'],
+                    'auto_number': row['auto_number'],
+                    'photo': row['photo'],
+                    'location_text': row['location_text'],
+                    'sighted_at': row['sighted_at'],
+                    'auto_link': score >= 0.85,
+                }
+
+        street_matched = sorted(
+            [v for v in sc_scores.values() if v['score'] >= 0.55],
+            key=lambda x: x['score'], reverse=True
+        )
+        result['street_matched'] = street_matched
+        qf = query_feat if isinstance(query_feat, list) else query_feat.tolist()
+        result['query_features'] = json.dumps(qf) if not existing_photo_id else None
 
     return render_template('identify.html', result=result, my_photos=my_photos)
 
@@ -1671,7 +1807,7 @@ def posts():
         WHERE (p.visibility='everyone' OR p.user_id IN ({}))
     '''.format(','.join('?' * len(visible_user_ids)))
     params = list(visible_user_ids)
-    if filter_purpose in ('share', 'adoption'):
+    if filter_purpose in ('share', 'adoption', 'street_cat'):
         base_query += ' AND p.purpose = ?'
         params.append(filter_purpose)
     if show_friends:
@@ -1814,7 +1950,10 @@ def post_send_email(post_id):
         return redirect(url_for('posts'))
     friend_id_raw = request.form.get('friend_id', '')
     caption_text = f'<p style="font-style:italic">"{post["caption"]}"</p>' if post['caption'] else ''
-    photo_text = f'<p><img src="{photo_url(post["photo"])}" style="max-width:400px;border-radius:8px"></p>' if post['photo'] else ''
+    raw_url = photo_url(post['photo']) if post['photo'] else ''
+    if raw_url and not raw_url.startswith('http'):
+        raw_url = 'https://catbook.pythonanywhere.com' + raw_url
+    photo_text = f'<p><img src="{raw_url}" style="max-width:400px;border-radius:8px"></p>' if raw_url else ''
 
     def _email_body(username):
         return f'''
@@ -2326,6 +2465,233 @@ def admin_delete_friendship(fid):
     db.execute('DELETE FROM friendships WHERE id=?', (fid,))
     db.commit()
     return redirect(url_for('admin_dashboard') + '#friends')
+
+
+# ───────────────────────────── Street Cats ──────────────────────────────
+
+def _next_street_cat_number(db):
+    row = db.execute('SELECT MAX(auto_number) FROM street_cats').fetchone()
+    return (row[0] or 0) + 1
+
+
+@app.route('/street-cats/create', methods=['POST'])
+@login_required
+def street_cat_create():
+    """Create a new street cat + first sighting linked to a post."""
+    db = get_db()
+    uid = session['user_id']
+    nickname = request.form.get('nickname', '').strip() or None
+    location = request.form.get('location', '').strip()
+    fed = 1 if request.form.get('fed') else 0
+    health = request.form.get('health_status', 'בריא')
+    sighted_at = request.form.get('sighted_at') or None
+    if not sighted_at:
+        sighted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    caption = request.form.get('caption', '').strip()
+    photo = request.form.get('photo', '').strip() or None
+    features_json = request.form.get('features_json', '').strip() or None
+
+    # Upload temp photo to Cloudinary for permanent storage
+    if photo and not photo.startswith('http'):
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], photo)
+        cloud_url = upload_to_cloudinary(temp_path)
+        if cloud_url:
+            photo = cloud_url
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+    auto_num = _next_street_cat_number(db)
+    db.execute(
+        'INSERT INTO street_cats (nickname, auto_number, created_by) VALUES (?,?,?)',
+        (nickname, auto_num, uid)
+    )
+    sc_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+    db.execute(
+        "INSERT INTO posts (user_id, photo, caption, visibility, purpose) VALUES (?,?,?,?,?)",
+        (uid, photo, caption, 'friends', 'street_cat')
+    )
+    post_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+    db.execute(
+        '''INSERT INTO street_cat_sightings
+           (street_cat_id, post_id, user_id, location_text, fed, health_status, sighted_at, features)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (sc_id, post_id, uid, location, fed, health, sighted_at, features_json)
+    )
+    db.commit()
+    flash(f'חתול הרחוב {nickname or "#" + str(auto_num)} נוסף!')
+    return redirect(url_for('street_cat_profile', sc_id=sc_id))
+
+
+@app.route('/street-cats/<int:sc_id>')
+@login_required
+def street_cat_profile(sc_id):
+    db = get_db()
+    sc = db.execute('SELECT * FROM street_cats WHERE id=?', (sc_id,)).fetchone()
+    if not sc:
+        return redirect(url_for('posts'))
+    sightings = db.execute('''
+        SELECT s.*, u.username, p.photo, p.caption
+        FROM street_cat_sightings s
+        JOIN users u ON u.id = s.user_id
+        JOIN posts p ON p.id = s.post_id
+        WHERE s.street_cat_id = ?
+        ORDER BY s.sighted_at DESC
+    ''', (sc_id,)).fetchall()
+    adopted_cat = None
+    if sc['adopted_by_cat_id']:
+        adopted_cat = db.execute('SELECT * FROM cats WHERE id=?', (sc['adopted_by_cat_id'],)).fetchone()
+    my_cats = db.execute('SELECT id, name FROM cats WHERE user_id=?', (session['user_id'],)).fetchall()
+    return render_template('street_cat_profile.html', sc=sc, sightings=sightings, adopted_cat=adopted_cat, my_cats=my_cats)
+
+
+@app.route('/street-cats/<int:sc_id>/add-sighting', methods=['POST'])
+@login_required
+def street_cat_add_sighting(sc_id):
+    db = get_db()
+    uid = session['user_id']
+    sc = db.execute('SELECT id FROM street_cats WHERE id=?', (sc_id,)).fetchone()
+    if not sc:
+        return redirect(url_for('posts'))
+    location = request.form.get('location', '').strip()
+    fed = 1 if request.form.get('fed') else 0
+    health = request.form.get('health_status', 'בריא')
+    sighted_at = request.form.get('sighted_at') or None
+    if not sighted_at:
+        sighted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    caption = request.form.get('caption', '').strip()
+    photo = request.form.get('photo', '').strip() or None
+    features_json = request.form.get('features_json', '').strip() or None
+
+    # Upload temp photo to Cloudinary for permanent storage
+    if photo and not photo.startswith('http'):
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER'], photo)
+        cloud_url = upload_to_cloudinary(temp_path)
+        if cloud_url:
+            photo = cloud_url
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+    db.execute(
+        "INSERT INTO posts (user_id, photo, caption, visibility, purpose) VALUES (?,?,?,?,?)",
+        (uid, photo, caption, 'friends', 'street_cat')
+    )
+    post_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+    db.execute(
+        '''INSERT INTO street_cat_sightings
+           (street_cat_id, post_id, user_id, location_text, fed, health_status, sighted_at, features)
+           VALUES (?,?,?,?,?,?,?,?)''',
+        (sc_id, post_id, uid, location, fed, health, sighted_at, features_json)
+    )
+    # notify all previous reporters (excluding current user)
+    sc_row = db.execute('SELECT created_by, nickname, auto_number FROM street_cats WHERE id=?', (sc_id,)).fetchone()
+    if sc_row:
+        name = sc_row['nickname'] or f'חתול רחוב #{sc_row["auto_number"]}'
+        prev_reporters = db.execute('''
+            SELECT DISTINCT user_id FROM street_cat_sightings
+            WHERE street_cat_id=? AND user_id != ?
+        ''', (sc_id, uid)).fetchall()
+        notified = set()
+        for r in prev_reporters:
+            if r['user_id'] not in notified:
+                db.execute(
+                    "INSERT INTO notifications (user_id, type, message, related_id) VALUES (?,?,?,?)",
+                    (r['user_id'], 'street_cat_sighting', f'{session["username"]} ראה את {name}', sc_id)
+                )
+                notified.add(r['user_id'])
+    db.commit()
+    flash('ההופעה נוספה!')
+    return redirect(url_for('street_cat_profile', sc_id=sc_id))
+
+
+@app.route('/street-cats/sightings/<int:sighting_id>/unlink', methods=['POST'])
+@login_required
+def street_cat_unlink_sighting(sighting_id):
+    """Original reporter of the street cat can unlink a wrong sighting."""
+    db = get_db()
+    uid = session['user_id']
+    sighting = db.execute('''
+        SELECT s.*, sc.created_by, sc.id as sc_id
+        FROM street_cat_sightings s
+        JOIN street_cats sc ON sc.id = s.street_cat_id
+        WHERE s.id=?
+    ''', (sighting_id,)).fetchone()
+    if not sighting or sighting['created_by'] != uid:
+        flash('אין הרשאה')
+        return redirect(url_for('posts'))
+    # move sighting to a new street cat
+    auto_num = _next_street_cat_number(db)
+    db.execute('INSERT INTO street_cats (auto_number, created_by) VALUES (?,?)', (auto_num, sighting['user_id']))
+    new_sc_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+    db.execute('UPDATE street_cat_sightings SET street_cat_id=? WHERE id=?', (new_sc_id, sighting_id))
+    db.commit()
+    flash('ההופעה נותקה ונוצר חתול רחוב חדש')
+    return redirect(url_for('street_cat_profile', sc_id=sighting['sc_id']))
+
+
+@app.route('/street-cats/<int:sc_id>/adopt', methods=['POST'])
+@login_required
+def street_cat_adopt(sc_id):
+    """Link a street cat to an owned cat."""
+    db = get_db()
+    uid = session['user_id']
+    cat_id = request.form.get('cat_id')
+    cat = db.execute('SELECT id FROM cats WHERE id=? AND user_id=?', (cat_id, uid)).fetchone()
+    if not cat:
+        flash('חתול לא נמצא')
+        return redirect(url_for('street_cat_profile', sc_id=sc_id))
+    db.execute('UPDATE street_cats SET adopted_by_cat_id=? WHERE id=?', (cat_id, sc_id))
+    db.commit()
+    flash('החתול קושר לפרופיל שלך!')
+    return redirect(url_for('street_cat_profile', sc_id=sc_id))
+
+
+@app.route('/street-cats/<int:sc_id>/delete', methods=['POST'])
+@login_required
+def street_cat_delete(sc_id):
+    db = get_db()
+    uid = session['user_id']
+    sc = db.execute('SELECT created_by FROM street_cats WHERE id=?', (sc_id,)).fetchone()
+    if not sc:
+        return redirect(url_for('street_cats_list'))
+    is_admin = session.get('is_admin')
+    if sc['created_by'] != uid and not is_admin:
+        flash('אין הרשאה למחוק חתול רחוב זה')
+        return redirect(url_for('street_cat_profile', sc_id=sc_id))
+    # Delete sightings and their posts
+    sightings = db.execute('SELECT post_id FROM street_cat_sightings WHERE street_cat_id=?', (sc_id,)).fetchall()
+    for s in sightings:
+        db.execute('DELETE FROM post_comments WHERE post_id=?', (s['post_id'],))
+        db.execute('DELETE FROM post_saves WHERE post_id=?', (s['post_id'],))
+        db.execute('DELETE FROM posts WHERE id=?', (s['post_id'],))
+    db.execute('DELETE FROM street_cat_sightings WHERE street_cat_id=?', (sc_id,))
+    db.execute('DELETE FROM street_cats WHERE id=?', (sc_id,))
+    db.commit()
+    flash('חתול הרחוב נמחק')
+    return redirect(url_for('street_cats_list'))
+
+
+@app.route('/street-cats')
+@login_required
+def street_cats_list():
+    db = get_db()
+    cats = db.execute('''
+        SELECT sc.*, COUNT(s.id) as sighting_count,
+               MAX(s.sighted_at) as last_seen,
+               (SELECT p.photo FROM street_cat_sightings s2
+                JOIN posts p ON p.id=s2.post_id
+                WHERE s2.street_cat_id=sc.id ORDER BY s2.sighted_at DESC LIMIT 1) as last_photo
+        FROM street_cats sc
+        LEFT JOIN street_cat_sightings s ON s.street_cat_id=sc.id
+        GROUP BY sc.id
+        ORDER BY last_seen DESC
+    ''').fetchall()
+    return render_template('street_cats_list.html', cats=cats)
 
 
 init_db()

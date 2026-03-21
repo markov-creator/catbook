@@ -26,20 +26,53 @@ function initIdentifyPreview() {
   const input = document.getElementById('identify-input');
   const preview = document.getElementById('identify-preview');
   if (!input || !preview) return;
+  let featuresReady = true; // true = ok to submit
 
   input.addEventListener('change', function () {
-    const file = this.files[0];
-    if (!file) return;
-    showCropModal(file, function(croppedBlob) {
-      // Show cropped preview to user, but keep original file in input for server
-      // (stored features were computed from full images — must stay consistent)
+    const originalFile = this.files[0];
+    if (!originalFile) return;
+    showCropModal(originalFile, function(croppedBlob) {
+      featuresReady = false;
+      // Show preview of original
       const reader = new FileReader();
-      reader.onload = e => {
-        preview.innerHTML = `<img src="${e.target.result}" alt="תמונה לזיהוי">`;
-      };
-      reader.readAsDataURL(croppedBlob);
+      reader.onload = e => { preview.innerHTML = `<img src="${e.target.result}" alt="תמונה לזיהוי">`; };
+      reader.readAsDataURL(originalFile);
+
+      // Send cropped to feature extraction
+      const featForm = new FormData();
+      featForm.append('photo', croppedBlob, 'cropped.jpg');
+      fetch('/api/extract-features', {method: 'POST', body: featForm})
+        .then(r => r.json())
+        .then(data => {
+          let tokenInput = document.getElementById('identify-features-token');
+          if (!tokenInput) {
+            tokenInput = document.createElement('input');
+            tokenInput.type = 'hidden';
+            tokenInput.id = 'identify-features-token';
+            tokenInput.name = 'features_token';
+            document.getElementById('identify-form').appendChild(tokenInput);
+          }
+          tokenInput.value = data.token || '';
+        })
+        .catch(() => {})
+        .finally(() => { featuresReady = true; });
     });
   });
+
+  // Block form submit until features are ready
+  document.getElementById('identify-form').addEventListener('submit', function(e) {
+    if (!featuresReady) {
+      e.preventDefault();
+      const btn = document.getElementById('identify-btn');
+      if (btn) { btn.textContent = '⏳ מכין תמונה...'; btn.disabled = true; }
+      const interval = setInterval(() => {
+        if (featuresReady) {
+          clearInterval(interval);
+          document.getElementById('identify-form').requestSubmit();
+        }
+      }, 200);
+    }
+  }, true); // capture phase — runs before initIdentifyForm's submit handler
 }
 
 // Animate progress steps during identification
@@ -150,10 +183,41 @@ function confirmDelete(catName) {
   return confirm(`האם למחוק את החתול "${catName}"?`);
 }
 
+// ── Real-time nav badge polling ───────────────────────────────
+function updateNavBadge(selector, count, el) {
+  const link = el || document.querySelector(selector);
+  if (!link) return;
+  let badge = link.querySelector('.nav-badge');
+  if (count > 0) {
+    if (!badge) { badge = document.createElement('span'); badge.className = 'nav-badge'; link.appendChild(badge); }
+    badge.textContent = count;
+  } else if (badge) {
+    badge.remove();
+  }
+}
+
+async function pollNavCounts() {
+  try {
+    const res = await fetch('/api/nav-counts');
+    if (!res.ok) return;
+    const d = await res.json();
+    // nav has two /friends links: first=friends(😽), second=chat(💬)
+    const friendsLinks = document.querySelectorAll('nav a[href*="/friends"]');
+    if (friendsLinks[0]) updateNavBadge(null, d.pending_requests, friendsLinks[0]);
+    if (friendsLinks[1]) updateNavBadge(null, d.unread_messages, friendsLinks[1]);
+    updateNavBadge('nav a[href*="/notifications"]', d.unread_notifs);
+  } catch(e) {}
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initPhotoPreview();
   initIdentifyPreview();
   initIdentifyForm();
+
+  // Poll every 20 seconds if logged in (nav links exist)
+  if (document.querySelector('nav .nav-links')) {
+    setInterval(pollNavCounts, 20000);
+  }
 
   const similar = sessionStorage.getItem('similar_notice');
   if (similar) {

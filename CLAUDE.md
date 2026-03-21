@@ -19,29 +19,32 @@ App runs on http://localhost:5000. DB and uploads are created automatically on f
 ## Deploying to PythonAnywhere
 **Local (Git Bash):**
 ```bash
-git add .
+git add <files>
 git commit -m "description"
 git push
 ```
 **PythonAnywhere Bash Console:**
 ```bash
-cd ~/catbook && git fetch origin && git checkout origin/master -- app.py templates/
+cd ~/catbook && git fetch origin && git checkout origin/master -- app.py static/main.js templates/
 ```
 Then click **Reload** in the Web tab.
 
 > ⚠️ Do NOT use `git pull` — it fails when `dinov2_small.onnx` is present (untracked, blocks merge). Use `git checkout origin/master -- <files>` instead.
 
 ## Architecture
-Single-file Flask app (`app.py`, ~2500 lines) with SQLite. All routes, DB init, and helpers are in `app.py`.
+Single-file Flask app (`app.py`, ~2600 lines) with SQLite. All routes, DB init, and helpers are in `app.py`.
 
 **Request flow:**
-1. `before_request` → `inject_nav_counts()` injects `pending_requests`, `unread_messages`, `unread_notifs` into every template via `g`
+1. `inject_globals()` context processor injects `pending_requests`, `unread_messages`, `unread_notifs` into every template
 2. `@login_required` decorator guards user routes; `@admin_required` guards `/admin/*`
 3. DB connection via `get_db()` (stored on `g`, closed after request)
 
 **Cat identification pipeline:**
-- Upload → `extract_features()` → DINOv2-small ONNX (`dinov2_small.onnx`, 84MB, NOT in git) → cosine similarity against stored features → `find_similar_cat()` notifies owner if match found
-- Similarity threshold: 0.55; confidence = 60% absolute score + 40% margin
+- Identify page: user uploads photo (full/original) → server `extract_features()` → cosine similarity via `get_or_compute_features()` → top-3 average score → threshold 0.55
+- Add photo flow: browser sends **cropped** blob to `/api/extract-features` (AI features) + **original** blob to Cloudinary (display) in parallel → form submits Cloudinary URL + feature token → server links them via `feature_tokens` table
+- `get_or_compute_features(db, photo_id, filename)` — returns cached features or downloads + computes on demand
+- Scoring: `score = mean(top_3_scores)`; confidence = 60% absolute + 40% margin
+- `find_similar_cat()` — checks new upload against other users' cats; notifies owner if similarity ≥ 0.55
 
 **Family tree layout (JS in `templates/family_tree.html`):**
 - BFS assigns generations (parents above children)
@@ -49,42 +52,53 @@ Single-file Flask app (`app.py`, ~2500 lines) with SQLite. All routes, DB init, 
 - T-junction SVG connectors drawn per family group
 - Relation semantics: `(cat_id=A, related_cat_id=B, relation='father')` = "A's father is B"
 
-## Image Storage (Cloudinary)
-New uploads go directly from the browser to Cloudinary (Upload Widget), bypassing the server — required because PythonAnywhere free tier blocks outbound HTTP.
+## Image Upload Flow (Cropper.js)
+All cat photo uploads go through a crop modal before uploading:
+1. User selects file → `showCropModal(file, callback)` in `main.js`
+2. Crop confirmed → callback receives `croppedBlob`
+3. Two parallel requests: `croppedBlob` → `/api/extract-features` (returns token) + `originalFile` → Cloudinary (returns URL)
+4. Form submits `photo_url` + `feature_token` → server looks up features from `feature_tokens` table and saves to `cat_photos.features`
 
+**Identify page:** also sends the **cropped** image to the server — consistent with stored features which are also computed from cropped images.
+
+## Image Storage (Cloudinary)
 - Cloud name: `ddo0urbwv` (`CLOUDINARY_CLOUD_NAME` env var)
 - Upload preset: `catbook_upload` (`CLOUDINARY_UPLOAD_PRESET` env var) — unsigned
 - **`photo_url(filename)`** — Jinja2 global: if value starts with `http` → Cloudinary URL as-is; otherwise → `/static/uploads/<filename>` (legacy)
+- `static/uploads/` holds temp files from identify sessions (named `temp_<uid>_<hash>.<ext>`)
 
 ## Email
-Uses `smtplib` (built-in). `send_email(to, subject, body)` runs in a background thread — silently skips if `MAIL_USER`/`MAIL_PASSWORD` not set.
+Uses `smtplib`. `send_email(to, subject, body)` runs in a background thread — silently skips if `MAIL_USER`/`MAIL_PASSWORD` not set.
 
-Triggered on: friend request received, cat identified (owner notified), post sent to specific friend(s).
+> ⚠️ PythonAnywhere free tier blocks outbound SMTP (ports 465/587). Email works locally but **not on the server**. Planned fix: SendGrid or Mailgun HTTP API.
 
-> ⚠️ PythonAnywhere free tier blocks outbound SMTP (ports 465 and 587 to smtp.gmail.com are unreachable). Email works locally but **not on the server**. Planned fix: switch to SendGrid or Mailgun HTTP API (whitelisted by PythonAnywhere).
+## Real-time Nav Badges
+`/api/nav-counts` returns `{pending_requests, unread_messages, unread_notifs}` as JSON.
+`main.js` polls this endpoint every 20 seconds and updates the navbar badges without page reload.
 
 ## Key Conventions
 - All UI is Hebrew RTL; font is Rubik (Google Fonts)
-- Flash categories: `'warning'` gets yellow style; `'admin_*'` shown only in admin dashboard
+- Flash categories: `'warning'` → yellow style; `'admin_*'` → admin dashboard only
 - Admin session: `session['is_admin']` (separate from `session['user_id']`)
-- Notifications: types are `identified`, `similar`, `tree_share`
+- Notification types: `identified`, `similar`, `tree_share`
 - Username inputs use `dir="auto"`; password inputs use `dir="ltr"`
-- After login → redirects to `index` (home page), not `cats`
-- Cloudinary widget uploads use `folder: 'catbook/{{ session.user_id }}'` to organize per user
-- `cat_photos.features` is NULL for Cloudinary-uploaded photos (no server-side processing possible on free tier) — only photos with features can be used for identification
+- After login → redirects to `index` (home page)
+- Cloudinary uploads use `folder: 'catbook/{{ session.user_id }}'`
 
 ## Database Tables
-`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`
+`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications`, `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`, `feature_tokens`
 
 Schema initialized in `init_db()`. Migrations run automatically on startup.
+
+## Utility Scripts
+- `compute_missing_features.py` — backfills `cat_photos.features` for photos with NULL. Supports `--db <path>` and `--dry-run`. Run locally (requires `dinov2_small.onnx`).
 
 ## Files NOT in Git (`.gitignore`)
 | File | Why |
 |------|-----|
 | `catbook.db` | SQLite DB |
-| `static/uploads/` | Legacy local images |
+| `static/uploads/` | Temp identify images + legacy local photos |
 | `*.onnx` | 84MB model — copy manually to server |
-| `static/uploads.zip` | Backup archive |
 | `.env` | Secrets |
 
 ## PythonAnywhere Config
