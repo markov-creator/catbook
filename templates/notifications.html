@@ -23,9 +23,15 @@
 </form>
 
 {% if notifs %}
+<div style="display:flex;justify-content:flex-start;margin-bottom:0.75rem">
+  <form method="POST" action="{{ url_for('notifications_delete_all') }}"
+        onsubmit="return confirm('למחוק את כל ההתראות?')">
+    <button type="submit" class="btn btn-secondary" style="font-size:0.85rem">🗑️ מחק הכל</button>
+  </form>
+</div>
 <div style="display:flex;flex-direction:column;gap:0.75rem">
   {% for n in notifs %}
-  <div class="notif-card {% if not n.is_read %}notif-card--unread{% endif %}">
+  <div class="notif-card {% if not n.is_read %}notif-card--unread{% endif %}" style="position:relative">
     <div class="notif-photos">
       {% if n.photo %}
         <img src="{{ photo_url(n.photo) }}" class="notif-photo">
@@ -61,6 +67,10 @@
       {% endif %}
       <div class="notif-time">{{ n.created_at }}</div>
     </div>
+    <form method="POST" action="{{ url_for('notification_delete', notif_id=n.id) }}"
+          style="position:absolute;top:0.6rem;left:0.6rem">
+      <button type="submit" style="background:none;border:none;cursor:pointer;color:var(--gray);font-size:1.1rem" title="מחק">✕</button>
+    </form>
   </div>
   {% endfor %}
 </div>

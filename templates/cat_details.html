@@ -3,7 +3,10 @@
 
 <div class="page-header">
   <h1 class="page-title">פרטים — {{ cat.name }}</h1>
-  <a href="{{ url_for('cats') }}" class="btn btn-secondary">← חזרה</a>
+  <div style="display:flex;gap:0.5rem">
+    <a href="{{ url_for('cat_events_page', cat_id=cat.id) }}" class="btn btn-secondary">📋 יומן חיים</a>
+    <a href="{{ url_for('cats') }}" class="btn btn-secondary">← חזרה</a>
+  </div>
 </div>
 
 {% if shared_with %}

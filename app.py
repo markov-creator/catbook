@@ -552,6 +552,17 @@ def init_db():
             FOREIGN KEY (post_id) REFERENCES posts(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
         )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS cat_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cat_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            event_time DATETIME NOT NULL,
+            details TEXT,
+            user_id INTEGER NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (cat_id) REFERENCES cats(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )''')
         db.commit()
 
 
@@ -930,6 +941,46 @@ def add_photo(cat_id):
     return jsonify({'error': 'קובץ לא תקין'}), 400
 
 
+def _auto_events_from_details(db, cat_id, uid, old_d, new_d):
+    """Create cat_events automatically when detail fields change on save."""
+    checks = [
+        ('last_fed',     'אכילה',  False),
+        ('last_treated', 'טיפול',  True),
+        ('neuter_date',  'עיקור',  True),
+    ]
+    for field, event_type, date_only in checks:
+        old_val = old_d.get(field)
+        new_val = new_d.get(field)
+        if new_val and new_val != old_val:
+            event_time = (new_val + 'T12:00') if date_only else new_val
+            db.execute(
+                'INSERT INTO cat_events (cat_id, event_type, event_time, user_id) VALUES (?,?,?,?)',
+                (cat_id, event_type, event_time, uid)
+            )
+
+
+def _check_birthday_event(db, cat_id, uid, birth_date):
+    """Auto-create a birthday event if today is the cat's birthday."""
+    if not birth_date:
+        return
+    try:
+        bd = datetime.strptime(birth_date, '%Y-%m-%d')
+        today = datetime.now()
+        if bd.month == today.month and bd.day == today.day:
+            existing = db.execute(
+                "SELECT id FROM cat_events WHERE cat_id=? AND event_type='יום הולדת' AND date(event_time)=date('now')",
+                (cat_id,)
+            ).fetchone()
+            if not existing:
+                db.execute(
+                    'INSERT INTO cat_events (cat_id, event_type, event_time, user_id) VALUES (?,?,?,?)',
+                    (cat_id, 'יום הולדת', today.strftime('%Y-%m-%dT%H:%M'), uid)
+                )
+                db.commit()
+    except ValueError:
+        pass
+
+
 @app.route('/cats/<int:cat_id>/details', methods=['GET', 'POST'])
 @login_required
 def cat_details_page(cat_id):
@@ -981,6 +1032,7 @@ def cat_details_page(cat_id):
             last_fed = request.form.get('last_fed', '').strip() or None
             presence = request.form.get('presence', '').strip() or None
             tags = request.form.get('tags', '').strip() or None
+            old_d = dict(shared_row)
             db.execute('''
                 UPDATE shared_details SET
                     gender=?, birth_date=?, age=?, neutered=?, neuter_date=?,
@@ -988,6 +1040,8 @@ def cat_details_page(cat_id):
                 WHERE id=?
             ''', (gender, birth_date, age, neutered, neuter_date,
                   last_treated, favorite_food, last_fed, presence, tags, shared_row['id']))
+            _auto_events_from_details(db, cat_id, uid, old_d,
+                {'last_fed': last_fed, 'last_treated': last_treated, 'neuter_date': neuter_date})
             db.commit()
             data_json = json.dumps({'gender': gender, 'birth_date': birth_date, 'age': age,
                 'neutered': neutered, 'neuter_date': neuter_date, 'last_treated': last_treated,
@@ -1019,6 +1073,8 @@ def cat_details_page(cat_id):
             last_fed = request.form.get('last_fed', '').strip() or None
             presence = request.form.get('presence', '').strip() or None
             tags = request.form.get('tags', '').strip() or None
+            old_row = db.execute('SELECT * FROM cat_details WHERE cat_id=?', (cat_id,)).fetchone()
+            old_d = dict(old_row) if old_row else {}
             db.execute('''
                 INSERT INTO cat_details
                     (cat_id, gender, birth_date, age, neutered, neuter_date, last_treated, favorite_food, last_fed, presence, tags)
@@ -1030,6 +1086,8 @@ def cat_details_page(cat_id):
                     last_fed=excluded.last_fed, presence=excluded.presence, tags=excluded.tags
             ''', (cat_id, gender, birth_date, age, neutered, neuter_date,
                   last_treated, favorite_food, last_fed, presence, tags))
+            _auto_events_from_details(db, cat_id, uid, old_d,
+                {'last_fed': last_fed, 'last_treated': last_treated, 'neuter_date': neuter_date})
             db.commit()
             data_json = json.dumps({'gender': gender, 'birth_date': birth_date, 'age': age,
                 'neutered': neutered, 'neuter_date': neuter_date, 'last_treated': last_treated,
@@ -1066,6 +1124,7 @@ def cat_details_page(cat_id):
     history = [{'id': h['id'],
                 'saved_at': h['saved_at'][:16].replace('T', ' '),
                 'username': h['username']} for h in history_rows]
+    _check_birthday_event(db, cat_id, uid, d.get('birth_date'))
     return render_template('cat_details.html', cat=cat, d=d, tag_pairs=tag_pairs,
                            is_owner=can_edit, shared_with=shared_with, history=history)
 
@@ -1099,6 +1158,143 @@ def details_history_load(cat_id, history_id):
     if not h:
         return jsonify({'error': 'not found'}), 404
     return jsonify({'success': True, 'data': json.loads(h['data'])})
+
+EVENT_TYPES = [
+    ('אכילה', '🍽️'),
+    ('שתייה', '💧'),
+    ('שינה', '😴'),
+    ('משחק', '🎾'),
+    ('ביקור וטרינר', '💉'),
+    ('טיפול', '💊'),
+    ('עיקור', '✂️'),
+    ('יום הולדת', '🎂'),
+    ('אחר', '🐾'),
+]
+
+def _cat_access(cat_id, uid, db):
+    """Returns (cat, is_owner) or (None, False) if no access."""
+    cat = db.execute('SELECT id, name, user_id FROM cats WHERE id=?', (cat_id,)).fetchone()
+    if not cat:
+        return None, False
+    if cat['user_id'] == uid:
+        return cat, True
+    friendship = db.execute('''
+        SELECT id FROM friendships
+        WHERE ((requester_id=? AND receiver_id=?) OR (requester_id=? AND receiver_id=?))
+          AND status='accepted'
+    ''', (uid, cat['user_id'], cat['user_id'], uid)).fetchone()
+    return (cat, False) if friendship else (None, False)
+
+
+@app.route('/cats/<int:cat_id>/events')
+@login_required
+def cat_events_page(cat_id):
+    db = get_db()
+    cat, is_owner = _cat_access(cat_id, session['user_id'], db)
+    if not cat:
+        flash('אין גישה')
+        return redirect(url_for('cats'))
+    period = request.args.get('period', 'all')
+    date_filter = ''
+    if period == 'day':
+        date_filter = "AND e.event_time >= datetime('now', '-1 day')"
+    elif period == 'week':
+        date_filter = "AND e.event_time >= datetime('now', '-7 days')"
+
+    events = db.execute(f'''
+        SELECT e.id, e.event_type, e.event_time, e.details, u.username, 'event' as source
+        FROM cat_events e
+        JOIN users u ON u.id = e.user_id
+        WHERE e.cat_id = ? {date_filter}
+        ORDER BY e.event_time DESC
+    ''', (cat_id,)).fetchall()
+
+    notif_date_filter = ''
+    if period == 'day':
+        notif_date_filter = "AND n.created_at >= datetime('now', '-1 day')"
+    elif period == 'week':
+        notif_date_filter = "AND n.created_at >= datetime('now', '-7 days')"
+
+    NOTIF_TYPE_LABELS = {
+        'identified': ('זוהה 🔍', '🔍'),
+        'similar':    ('נמצא חתול דומה 👀', '👀'),
+        'street_cat_sighting': ('הופעה ברחוב 🐾', '🐾'),
+    }
+    notifs = db.execute(f'''
+        SELECT n.type, n.created_at, n.message, u.username
+        FROM notifications n
+        LEFT JOIN users u ON u.id = n.from_user_id
+        WHERE n.cat_id = ? {notif_date_filter}
+          AND n.type IN ('identified','similar','street_cat_sighting')
+        ORDER BY n.created_at DESC
+    ''', (cat_id,)).fetchall()
+
+    notif_events = []
+    for n in notifs:
+        label, _ = NOTIF_TYPE_LABELS.get(n['type'], (n['type'], '🔔'))
+        notif_events.append({
+            'id': None,
+            'event_type': label,
+            'event_time': n['created_at'],
+            'details': n['message'] or '',
+            'username': n['username'] or '—',
+            'source': 'notif',
+        })
+
+    all_events = sorted(
+        [dict(e) for e in events] + notif_events,
+        key=lambda x: x['event_time'] or '',
+        reverse=True
+    )
+
+    now = datetime.now().strftime('%Y-%m-%dT%H:%M')
+    return render_template('cat_events.html', cat=cat, events=all_events,
+                           is_owner=is_owner, event_types=EVENT_TYPES, now=now, period=period)
+
+
+@app.route('/cats/<int:cat_id>/events/add', methods=['POST'])
+@login_required
+def cat_event_add(cat_id):
+    db = get_db()
+    cat, is_owner = _cat_access(cat_id, session['user_id'], db)
+    if not cat:
+        flash('אין גישה')
+        return redirect(url_for('cats'))
+    event_type = request.form.get('event_type', '').strip()
+    custom_type = request.form.get('custom_event_type', '').strip()
+    if event_type == 'אחר' and custom_type:
+        event_type = custom_type
+    event_time = request.form.get('event_time', '').strip()
+    details = request.form.get('details', '').strip() or None
+    if not event_type or not event_time:
+        flash('חסרים פרטים')
+        return redirect(url_for('cat_events_page', cat_id=cat_id))
+    db.execute(
+        'INSERT INTO cat_events (cat_id, event_type, event_time, details, user_id) VALUES (?,?,?,?,?)',
+        (cat_id, event_type, event_time, details, session['user_id'])
+    )
+    db.commit()
+    flash('האירוע נוסף!')
+    return redirect(url_for('cat_events_page', cat_id=cat_id))
+
+
+@app.route('/cats/<int:cat_id>/events/<int:event_id>/delete', methods=['POST'])
+@login_required
+def cat_event_delete(cat_id, event_id):
+    db = get_db()
+    uid = session['user_id']
+    cat = db.execute('SELECT user_id FROM cats WHERE id=?', (cat_id,)).fetchone()
+    if not cat:
+        return redirect(url_for('cats'))
+    event = db.execute('SELECT user_id FROM cat_events WHERE id=? AND cat_id=?', (event_id, cat_id)).fetchone()
+    if not event:
+        return redirect(url_for('cat_events_page', cat_id=cat_id))
+    if event['user_id'] != uid and cat['user_id'] != uid:
+        flash('אין הרשאה')
+        return redirect(url_for('cat_events_page', cat_id=cat_id))
+    db.execute('DELETE FROM cat_events WHERE id=?', (event_id,))
+    db.commit()
+    return redirect(url_for('cat_events_page', cat_id=cat_id))
 
 
 @app.route('/photos/<int:photo_id>/delete', methods=['POST'])
@@ -1638,6 +1834,24 @@ def friend_remove(fid):
     db.commit()
     flash('החבר הוסר')
     return redirect(url_for('friends'))
+
+
+@app.route('/notifications/<int:notif_id>/delete', methods=['POST'])
+@login_required
+def notification_delete(notif_id):
+    db = get_db()
+    db.execute('DELETE FROM notifications WHERE id=? AND user_id=?', (notif_id, session['user_id']))
+    db.commit()
+    return redirect(request.referrer or url_for('notifications'))
+
+
+@app.route('/notifications/delete-all', methods=['POST'])
+@login_required
+def notifications_delete_all():
+    db = get_db()
+    db.execute('DELETE FROM notifications WHERE user_id=?', (session['user_id'],))
+    db.commit()
+    return redirect(url_for('notifications'))
 
 
 @app.route('/notifications')

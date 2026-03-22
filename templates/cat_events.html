@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">📋 יומן חיים — {{ cat.name }}</h1>
+  <a href="{{ url_for('cat_details_page', cat_id=cat.id) }}" class="btn btn-secondary">← פרטים</a>
+</div>
+
+<div style="display:flex;gap:0.5rem;margin-bottom:1.25rem">
+  {% for label, val in [('הכל','all'),('שבוע אחרון','week'),('יום אחרון','day')] %}
+  <a href="{{ url_for('cat_events_page', cat_id=cat.id, period=val) }}"
+     class="btn {% if period==val %}btn{% else %}btn-secondary{% endif %}"
+     style="{% if period==val %}background:var(--purple);color:#fff{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+{% if is_owner %}
+<div class="card" style="margin-bottom:1.5rem;padding:1.25rem">
+  <div style="font-weight:700;font-size:1rem;margin-bottom:1rem;color:var(--purple)">➕ הוסף אירוע</div>
+  <form method="POST" action="{{ url_for('cat_event_add', cat_id=cat.id) }}">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-bottom:0.75rem">
+      <div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--gray);margin-bottom:0.3rem">סוג אירוע</div>
+        <select name="event_type" id="event-type-select" required onchange="toggleCustomType(this.value)"
+                style="width:100%;padding:0.7rem 1rem;border:2px solid var(--purple-mid);border-radius:11px;font-family:'Rubik',sans-serif;font-weight:700;font-size:1rem;color:var(--text);background:#fff;direction:rtl">
+          {% for name, emoji in event_types %}
+          <option value="{{ name }}">{{ emoji }} {{ name }}</option>
+          {% endfor %}
+        </select>
+        <input type="text" id="custom-event-type" name="custom_event_type"
+               placeholder="שם הפעולה..." required
+               style="display:none;margin-top:0.5rem;width:100%">
+      </div>
+      <div>
+        <div style="font-size:0.8rem;font-weight:600;color:var(--gray);margin-bottom:0.3rem">תאריך ושעה</div>
+        <input type="datetime-local" name="event_time" required value="{{ now }}"
+               style="width:100%;padding:0.7rem 1rem;border:2px solid var(--purple-mid);border-radius:11px;font-family:'Rubik',sans-serif;font-weight:700;font-size:1rem;color:var(--text);background:#fff;direction:rtl">
+      </div>
+    </div>
+    <div style="margin-bottom:0.75rem">
+      <div style="font-size:0.8rem;font-weight:600;color:var(--gray);margin-bottom:0.3rem">פרטים (אופציונלי)</div>
+      <input type="text" name="details" placeholder="לדוג׳: חצי כוס יבש + טונה רטובה" style="width:100%">
+    </div>
+    <div style="text-align:left">
+      <button type="submit" class="btn-primary">שמור אירוע</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{% if events %}
+<div class="card" style="padding:0;overflow:hidden">
+  <table style="width:100%;border-collapse:collapse;text-align:right">
+    <thead>
+      <tr style="background:var(--purple);color:#fff;font-size:0.85rem">
+        <th style="padding:0.6rem 1rem;color:#fff">סוג</th>
+        <th style="padding:0.6rem 1rem;color:#fff">תאריך ושעה</th>
+        <th style="padding:0.6rem 1rem;color:#fff">פרטים</th>
+        <th style="padding:0.6rem 1rem;color:#fff">משתמש</th>
+        {% if is_owner %}<th style="padding:0.6rem 0.75rem"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      {% set emoji = {'אכילה':'🍽️','שתייה':'💧','שינה':'😴','משחק':'🎾','ביקור וטרינר':'💉','טיפול':'💊','עיקור':'✂️','יום הולדת':'🎂','אחר':'🐾'}.get(e.event_type, '') %}
+      <tr style="border-top:1px solid var(--purple-mid);{% if e.source=='notif' %}background:#fef9c3{% elif loop.index is even %}background:var(--purple-light){% endif %}">
+        <td style="padding:0.65rem 1rem;font-weight:600;white-space:nowrap">{% if emoji %}{{ emoji }} {% endif %}{{ e.event_type }}</td>
+        <td style="padding:0.65rem 1rem;white-space:nowrap;color:var(--gray);font-size:0.9rem">
+          {{ e.event_time[:16].replace('T',' ') }}
+        </td>
+        <td style="padding:0.65rem 1rem">{{ e.details or '—' }}</td>
+        <td style="padding:0.65rem 1rem;font-size:0.85rem;color:var(--gray);white-space:nowrap">{{ e.username }}</td>
+        {% if is_owner %}
+        <td style="padding:0.65rem 0.75rem">
+          {% if e.source == 'event' and e.id %}
+          <form method="POST" action="{{ url_for('cat_event_delete', cat_id=cat.id, event_id=e.id) }}"
+                onsubmit="return confirm('למחוק אירוע זה?')">
+            <button type="submit" style="background:none;border:none;cursor:pointer;color:var(--gray);font-size:1rem" title="מחק">✕</button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div style="text-align:center;color:var(--gray);padding:3rem 0">אין אירועים עדיין</div>
+{% endif %}
+
+<script>
+function toggleCustomType(val) {
+  const custom = document.getElementById('custom-event-type');
+  const select = document.getElementById('event-type-select');
+  if (val === 'אחר') {
+    custom.style.display = 'block';
+    custom.required = true;
+    select.required = false;
+  } else {
+    custom.style.display = 'none';
+    custom.required = false;
+    select.required = true;
+  }
+}
+</script>
+{% endblock %}

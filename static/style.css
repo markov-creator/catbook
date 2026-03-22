@@ -123,6 +123,26 @@ main {
   transform: translateY(0);
 }
 
+.btn-primary {
+  display: inline-block;
+  padding: 0.65rem 1.75rem;
+  background: var(--purple);
+  color: var(--white);
+  border: none;
+  border-radius: 11px;
+  font-family: 'Rubik', sans-serif;
+  font-weight: 800;
+  font-size: 1rem;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.18s, transform 0.1s;
+  white-space: nowrap;
+}
+.btn-primary:hover {
+  background: var(--purple-dark);
+  transform: translateY(-1px);
+}
+
 .btn-danger {
   background: #dc2626;
 }
@@ -174,7 +194,8 @@ label {
 }
 
 input[type="text"],
-input[type="password"] {
+input[type="password"],
+input[type="email"] {
   width: 100%;
   padding: 0.7rem 1rem;
   border: 2px solid var(--purple-mid);
