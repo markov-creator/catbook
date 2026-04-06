@@ -2,6 +2,7 @@
 {% block content %}
 <div class="auth-container">
   <h1 class="auth-title">🐱 CatBook</h1>
+  <p style="text-align:center;color:var(--purple);margin:-0.5rem 0 1rem;font-size:2rem;font-family:'Caveat',cursive;font-weight:bold;">קהילת &#10084;&#65039; חתולים</p>
   <form method="POST" autocomplete="off">
     <div class="form-group">
       <label for="username">שם משתמש</label>
@@ -14,7 +15,7 @@
     <button type="submit" class="btn btn-full">התחבר</button>
   </form>
   <div class="auth-link">
-    אין לך חשבון? <a href="{{ url_for('register') }}">הירשם כאן</a>
+    אין לך חשבון? <strong>הרשמה ושימוש חינם</strong> — <a href="{{ url_for('register') }}">כאן</a>
   </div>
   <div class="auth-link" style="margin-top:0.5rem">
     <a href="{{ url_for('forgot_password') }}">שכחת סיסמה?</a>

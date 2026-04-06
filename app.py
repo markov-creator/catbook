@@ -2823,11 +2823,11 @@ def admin_dashboard():
     ''').fetchall()
 
     sightings = db.execute('''
-        SELECT scs.id, scs.street_cat_id, scs.location_text, scs.health, scs.sighted_at,
+        SELECT scs.id, scs.street_cat_id, scs.location_text, scs.health_status as health, scs.sighted_at,
                sc.auto_number, sc.nickname, u.username as reporter, p.photo
         FROM street_cat_sightings scs
         JOIN street_cats sc ON sc.id = scs.street_cat_id
-        JOIN users u ON u.id = scs.reported_by
+        JOIN users u ON u.id = scs.user_id
         LEFT JOIN posts p ON p.id = scs.post_id
         ORDER BY scs.sighted_at DESC LIMIT 200
     ''').fetchall()
