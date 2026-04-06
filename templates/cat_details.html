@@ -2,7 +2,12 @@
 {% block content %}
 
 <div class="page-header">
-  <h1 class="page-title">פרטים — {{ cat.name }}</h1>
+  <div style="display:flex;align-items:center;gap:0.75rem">
+    {% if cat_photo %}
+    <img src="{{ photo_url(cat_photo) }}" style="width:104px;height:104px;object-fit:cover;border-radius:50%;flex-shrink:0;border:2px solid var(--purple-light)">
+    {% endif %}
+    <h1 class="page-title" style="margin:0">פרטים — {{ cat.name }}</h1>
+  </div>
   <div style="display:flex;gap:0.5rem">
     <a href="{{ url_for('cat_events_page', cat_id=cat.id) }}" class="btn btn-secondary">📋 יומן חיים</a>
     <a href="{{ url_for('cats') }}" class="btn btn-secondary">← חזרה</a>

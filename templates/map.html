@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">🗺️ מפת חתולים</h1>
+  <div style="font-size:0.9rem;color:var(--gray)">
+    <span id="map-status">טוען מיקומים...</span>
+  </div>
+</div>
+
+<div style="display:flex;gap:1rem;margin-bottom:0.75rem;flex-wrap:wrap;align-items:center">
+  <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem">
+    🐱 חתולים רגילים
+  </div>
+  <div style="display:flex;align-items:center;gap:0.4rem;font-size:0.88rem">
+    🐾 חתולי רחוב
+  </div>
+  <div style="color:var(--gray);font-size:0.83rem">המיקום הוא מהזיהוי האחרון</div>
+</div>
+
+<div id="cat-map" style="height:600px;border-radius:16px;overflow:hidden;box-shadow:0 4px 18px rgba(124,58,237,0.12)"></div>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+const STREET_DATA = {{ street_data|tojson|safe }};
+const CAT_DATA = {{ cat_data|tojson|safe }};
+
+const map = L.map('cat-map').setView([32.805, 35.104], 14);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>'
+}).addTo(map);
+
+function makeEmojiIcon(emoji) {
+  return L.divIcon({
+    className: '',
+    html: `<div style="font-size:0.85rem;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))">${emoji}</div>`,
+    iconSize: [14, 14],
+    iconAnchor: [7, 14],
+    popupAnchor: [0, -16]
+  });
+}
+
+const purpleIcon = makeEmojiIcon('🐱');
+const orangeIcon = makeEmojiIcon('🐾');
+
+const geocodeCache = JSON.parse(localStorage.getItem('catbook_geocache') || '{}');
+
+function saveCache() {
+  try { localStorage.setItem('catbook_geocache', JSON.stringify(geocodeCache)); } catch(e) {}
+}
+
+function addMarker(lat, lng, popupHtml, icon) {
+  L.marker([lat, lng], { icon }).bindPopup(popupHtml).addTo(map);
+}
+
+function streetPopup(s) {
+  const name = s.nickname || ('חתול רחוב #' + s.auto_number);
+  const photo = s.photo_url ? `<img src="${s.photo_url}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-bottom:0.4rem;display:block">` : '';
+  const date = s.sighted_at ? s.sighted_at.slice(0,10) : '';
+  return `<div style="text-align:right;min-width:130px">${photo}<strong>${name}</strong><br><span style="font-size:0.8rem;color:#666">${s.location_text}</span>${date ? '<br><span style="font-size:0.75rem;color:#999">' + date + '</span>' : ''}<br><a href="/street-cats/${s.sc_id}" style="color:#f97316;font-size:0.85rem">צפה בפרופיל ←</a></div>`;
+}
+
+function catPopup(c) {
+  const photo = c.photo_url ? `<img src="${c.photo_url}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;margin-bottom:0.4rem;display:block">` : '';
+  const date = c.created_at ? c.created_at.slice(0,10) : '';
+  return `<div style="text-align:right;min-width:130px">${photo}<strong>${c.cat_name}</strong><br><span style="font-size:0.82rem;color:#666">של ${c.username}</span><br><span style="font-size:0.8rem;color:#888">${c.location}</span>${date ? '<br><span style="font-size:0.75rem;color:#999">' + date + '</span>' : ''}<br><a href="/cats/${c.cat_id}/details" style="color:#7c3aed;font-size:0.85rem">צפה בפרופיל ←</a></div>`;
+}
+
+// Items that need geocoding (text-only)
+const queue = [];
+let placed = 0;
+let total = 0;
+
+// Place items with existing lat/lng immediately
+for (const s of STREET_DATA) {
+  if (s.latitude && s.longitude) {
+    addMarker(s.latitude, s.longitude, streetPopup(s), orangeIcon);
+    placed++;
+  } else if (s.location_text) {
+    queue.push({ text: s.location_text, popup: streetPopup(s), icon: orangeIcon });
+  }
+}
+for (const c of CAT_DATA) {
+  if (c.location) {
+    queue.push({ text: c.location, popup: catPopup(c), icon: purpleIcon });
+  }
+}
+
+total = placed + queue.length;
+
+function updateStatus() {
+  const el = document.getElementById('map-status');
+  if (queue.length === 0 && total === 0) {
+    el.textContent = 'אין נתוני מיקום עדיין';
+    return;
+  }
+  el.textContent = `מוצגים ${placed} מתוך ${total} חתולים`;
+}
+
+updateStatus();
+
+let qIdx = 0;
+function processNext() {
+  if (qIdx >= queue.length) {
+    updateStatus();
+    return;
+  }
+  const item = queue[qIdx++];
+  const key = item.text.trim().toLowerCase();
+
+  if (geocodeCache[key]) {
+    const { lat, lng } = geocodeCache[key];
+    addMarker(lat, lng, item.popup, item.icon);
+    placed++;
+    updateStatus();
+    processNext();
+    return;
+  }
+
+  const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(item.text);
+  fetch(url, { headers: { 'Accept-Language': 'he' } })
+    .then(r => r.json())
+    .then(data => {
+      if (data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        geocodeCache[key] = { lat, lng };
+        saveCache();
+        addMarker(lat, lng, item.popup, item.icon);
+        placed++;
+        updateStatus();
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(processNext, 1100);
+    });
+}
+
+if (queue.length > 0) {
+  setTimeout(processNext, 300);
+}
+</script>
+
+{% endblock %}

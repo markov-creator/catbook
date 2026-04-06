@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="container" style="max-width:680px;margin:0 auto;padding:1rem">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
     <h2 style="margin:0;color:#6a0dad">🐾 חתולי רחוב</h2>
     <a href="{{ url_for('identify') }}" class="btn-primary" style="text-decoration:none">+ דווח על חתול</a>
   </div>
+  <p style="color:var(--gray);font-size:0.92rem;margin-bottom:1rem">
+    מעקב קהילתי אחרי חתולים ללא בעלים — תיעוד הופעות, מיקום ומצב בריאותי. להזדהות עם חתול ספציפי, השתמש ב<a href="{{ url_for('identify') }}" style="color:var(--purple)">זיהוי חתול</a>.
+  </p>
 
   {% if not cats %}
   <div class="card" style="text-align:center;padding:2rem;color:#888">

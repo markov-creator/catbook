@@ -80,6 +80,15 @@ Community tracking system for unowned street cats (`/street-cats`).
 - Delete permission: first reporter (`created_by`) or admin only.
 - Sighting photos uploaded directly from profile page go through server-side `upload_to_cloudinary()`.
 
+## Cat Life Log
+Per-cat event journal at `/cats/<id>/events`.
+- `cat_events` table: `cat_id`, `event_type`, `event_time`, `details`, `user_id`
+- `EVENT_TYPES` constant in `app.py` lists all event types with emoji. Selecting "אחר" shows a free-text input for a custom type name.
+- Auto-events on detail save: `_auto_events_from_details()` creates events when `last_fed` → "אכילה", `last_treated` → "טיפול", `neuter_date` → "עיקור" change.
+- Birthday auto-event: `_check_birthday_event()` called on GET of details page — creates one "יום הולדת" event per day when `birth_date` month/day matches today.
+- Notifications for the cat (`identified`, `similar`, `street_cat_sighting`) appear inline in the log (yellow row, not deletable).
+- Access: owner + friends (same as details page), via `_cat_access(cat_id, uid, db)` helper.
+
 ## Real-time Nav Badges
 `/api/nav-counts` returns `{pending_requests, unread_messages, unread_notifs}` as JSON.
 `main.js` polls this endpoint every 20 seconds and updates the navbar badges without page reload.
@@ -93,8 +102,14 @@ Community tracking system for unowned street cats (`/street-cats`).
 - After login → redirects to `index` (home page)
 - Cloudinary uploads use `folder: 'catbook/{{ session.user_id }}'`
 
+## CSS Variables
+Defined in `:root` in `style.css`: `--purple` (#7c3aed), `--purple-dark` (#5b21b6), `--purple-light` (#ede9fe), `--purple-mid` (#ddd6fe), `--white`, `--text` (#1e1b4b), `--gray` (#6b7280).
+> ⚠️ Variables like `--primary`, `--card-bg`, `--bg-secondary`, `--border-color`, `--text-muted` do NOT exist — using them silently produces no styling.
+- `input[type="text/password/email"]` are globally styled. `select`, `input[type="datetime-local"]`, `input[type="date"]` are only styled inside `.cat-details-table` — use explicit inline styles elsewhere.
+- `.btn` = full purple button. `.btn-primary` = same (standalone, no need for `btn btn-primary`). `.btn-secondary` = light purple. `.btn-danger` = red.
+
 ## Database Tables
-`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications` (with `message`, `related_id`), `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`, `feature_tokens`, `street_cats`, `street_cat_sightings`
+`users` (with `email`, `home_bg`), `cats`, `cat_photos` (with `features` JSON), `friendships`, `notifications` (with `message`, `related_id`), `messages`, `cat_details`, `shared_details`, `details_history`, `posts`, `post_comments`, `post_saves`, `cat_relations`, `family_trees`, `tree_shares`, `settings`, `login_logs`, `feature_tokens`, `street_cats`, `street_cat_sightings`, `cat_events`
 
 Schema initialized in `init_db()`. Migrations run automatically on startup.
 

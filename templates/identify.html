@@ -5,33 +5,25 @@
   <h1 class="page-title" style="margin-bottom:1.5rem">זיהוי חתול</h1>
 
   <div class="identify-card">
-    <p class="identify-desc">העלה תמונה של חתול וה-AI יזהה איזה מהחתולים הרשומים זה — שלך ושל משתמשים אחרים</p>
-
-    <div style="display:flex;gap:8px;margin-bottom:1rem">
-      <button type="button" id="tab-upload" onclick="switchTab('upload')"
-              class="btn" style="flex:1">📤 העלה תמונה חדשה</button>
-      <button type="button" id="tab-existing" onclick="switchTab('existing')"
-              class="btn btn-secondary" style="flex:1">🐱 בחר מהחתולים שלי</button>
-    </div>
+    <p class="identify-desc">העלה תמונה של חתול וה-AI יזהה איזה מהחתולים הרשומים זה — שלך ושל משתמשים אחרים. לתיעוד חתול רחוב ללא בעלים, עבור ל<a href="{{ url_for('street_cats_list') }}" style="color:var(--purple)">חתולי רחוב</a>.</p>
 
     <form method="POST" enctype="multipart/form-data" id="identify-form">
       <input type="hidden" name="existing_photo_id" id="existing_photo_id" value="">
 
-      <div id="section-upload">
-        <div class="form-group">
-          <label>תמונה לזיהוי</label>
-          <div class="file-input-wrapper" onclick="document.getElementById('identify-input').click()"
-               style="background:#0077cc;color:#fff;border-color:#0077cc;font-weight:bold">
-            <input type="file" id="identify-input" name="photo" accept="image/*">
-            <div class="file-input-label" style="color:#fff">📷 לחץ לבחירת תמונה</div>
-          </div>
-        </div>
-        <div class="identify-preview" id="identify-preview"></div>
+      <div style="display:flex;gap:8px;margin-bottom:1rem">
+        <label for="identify-input" class="btn" style="flex:1;text-align:center;cursor:pointer;margin:0">
+          📤 העלה תמונה חדשה
+        </label>
+        <input type="file" id="identify-input" name="photo" accept="image/*" style="display:none">
+        <button type="button" id="tab-existing" onclick="toggleExisting(this)"
+                class="btn btn-secondary" style="flex:1">🐱 בחר מהחתולים שלי</button>
       </div>
 
-      <div id="section-existing" style="display:none">
+      <div class="identify-preview" id="identify-preview"></div>
+
+      <div id="section-existing" style="display:none;margin-bottom:1rem">
         {% if my_photos %}
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px;margin-bottom:1rem">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:8px">
           {% for p in my_photos %}
           <div class="existing-photo-thumb" data-id="{{ p.id }}" onclick="selectExistingPhoto(this)"
                title="{{ p.cat_name }}" style="cursor:pointer;border-radius:8px;overflow:hidden;border:2px solid transparent;position:relative">
@@ -47,7 +39,8 @@
 
       <div class="form-group" style="margin-top:1.2rem">
         <label>כתובת <span style="font-weight:400;color:var(--gray)">(אופציונלי)</span></label>
-        <input type="text" name="location" placeholder="לדוג׳: רחוב הרצל 1, תל אביב" style="margin-top:0.35rem">
+        <input type="text" id="identify-location-input" name="location" placeholder="לדוג׳: רחוב הרצל 1, תל אביב" style="margin-top:0.35rem" oninput="onIdentifyLocationInput()">
+        <div id="identify-location-map" style="display:none;height:200px;border-radius:12px;overflow:hidden;margin-top:0.5rem"></div>
       </div>
 
       <div class="form-group" style="margin-top:0.8rem">
@@ -168,10 +161,19 @@
           <form method="POST" action="{{ url_for('street_cat_add_sighting', sc_id=sc.sc_id) }}">
             <input type="hidden" name="photo" value="{{ result.temp_filename }}">
             <input type="hidden" name="features_json" value="{{ result.query_features or '' }}">
+            {% if identify_lat %}<input type="hidden" name="latitude" value="{{ identify_lat }}">{% endif %}
+            {% if identify_lng %}<input type="hidden" name="longitude" value="{{ identify_lng }}">{% endif %}
             <div style="display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.5rem">
-              <input type="text" name="location" placeholder="📍 מיקום" style="flex:1;min-width:140px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
+              <div style="display:flex;gap:0.3rem;flex:1;min-width:140px">
+                <input type="text" id="sighting-loc-{{ sc.sc_id }}" name="location" placeholder="📍 מיקום" style="flex:1;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
+                <button type="button" onclick="openPickerMap('sighting-loc-{{ sc.sc_id }}','sighting-lat-{{ sc.sc_id }}','sighting-lng-{{ sc.sc_id }}','sighting-picker-{{ sc.sc_id }}')"
+                        style="border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;background:#fff;cursor:pointer;font-size:1rem">🗺️</button>
+              </div>
               <input type="datetime-local" name="sighted_at" style="flex:1;min-width:160px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
             </div>
+            <input type="hidden" id="sighting-lat-{{ sc.sc_id }}" name="latitude">
+            <input type="hidden" id="sighting-lng-{{ sc.sc_id }}" name="longitude">
+            <div id="sighting-picker-{{ sc.sc_id }}" style="display:none;height:200px;border-radius:10px;overflow:hidden;margin-bottom:0.5rem"></div>
             <div style="display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-bottom:0.5rem">
               <select name="health_status" style="flex:1;min-width:120px;border:1px solid #c9a0e0;border-radius:7px;padding:5px 8px;font-family:inherit">
                 <option value="בריא">✅ בריא</option>
@@ -216,10 +218,19 @@
             <form method="POST" action="{{ url_for('street_cat_create') }}">
               <input type="hidden" name="photo" value="{{ result.temp_filename }}">
               <input type="hidden" name="features_json" value="{{ result.query_features or '' }}">
+              {% if identify_lat %}<input type="hidden" name="latitude" value="{{ identify_lat }}">{% endif %}
+              {% if identify_lng %}<input type="hidden" name="longitude" value="{{ identify_lng }}">{% endif %}
               <input type="text" name="nickname" placeholder="שם הכינוי (אופציונלי)"
                      style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
-              <input type="text" name="location" placeholder="📍 מיקום (רחוב/שכונה)"
-                     style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+              <div style="display:flex;gap:0.4rem;margin-bottom:0.5rem">
+                <input type="text" id="create-location-input" name="location" placeholder="📍 מיקום (רחוב/שכונה)"
+                       style="flex:1;box-sizing:border-box;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
+                <button type="button" onclick="openPickerMap('create-location-input','create-lat','create-lng','create-picker-map')"
+                        style="border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.7rem;background:#fff;cursor:pointer;font-size:1rem">🗺️</button>
+              </div>
+              <input type="hidden" id="create-lat" name="latitude">
+              <input type="hidden" id="create-lng" name="longitude">
+              <div id="create-picker-map" style="display:none;height:220px;border-radius:10px;overflow:hidden;margin-bottom:0.5rem"></div>
               <input type="datetime-local" name="sighted_at"
                      style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
               <select name="health_status" style="width:100%;box-sizing:border-box;margin-bottom:0.5rem;border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.6rem;font-family:inherit">
@@ -241,18 +252,115 @@
   </div>
 </div>
 
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
-function switchTab(tab) {
-  var isUpload = tab === 'upload';
-  document.getElementById('section-upload').style.display = isUpload ? 'block' : 'none';
-  document.getElementById('section-existing').style.display = isUpload ? 'none' : 'block';
-  document.getElementById('tab-upload').className = isUpload ? 'btn' : 'btn btn-secondary';
-  document.getElementById('tab-existing').className = isUpload ? 'btn btn-secondary' : 'btn';
-  if (isUpload) {
+var pickerMaps = {};
+
+function openPickerMap(locationInputId, latInputId, lngInputId, mapDivId) {
+  var mapDiv = document.getElementById(mapDivId);
+  if (!mapDiv) return;
+
+  if (mapDiv.style.display === 'block') {
+    mapDiv.style.display = 'none';
+    return;
+  }
+  mapDiv.style.display = 'block';
+
+  if (pickerMaps[mapDivId]) {
+    pickerMaps[mapDivId].invalidateSize();
+    return;
+  }
+
+  var m = L.map(mapDivId).setView([32.805, 35.104], 13);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO'
+  }).addTo(m);
+
+  var marker = null;
+  m.on('click', function(e) {
+    var lat = e.latlng.lat, lng = e.latlng.lng;
+    if (marker) marker.setLatLng([lat, lng]);
+    else marker = L.marker([lat, lng]).addTo(m);
+
+    document.getElementById(latInputId).value = lat;
+    document.getElementById(lngInputId).value = lng;
+
+    // Reverse geocode
+    fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng + '&accept-language=he')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data && data.display_name) {
+          var parts = data.address;
+          var loc = parts.road || parts.neighbourhood || parts.suburb || '';
+          if (parts.city || parts.town || parts.village) loc += (loc ? ', ' : '') + (parts.city || parts.town || parts.village);
+          document.getElementById(locationInputId).value = loc || data.display_name.split(',').slice(0,2).join(',');
+        }
+      })
+      .catch(function(){});
+  });
+
+  pickerMaps[mapDivId] = m;
+  setTimeout(function(){ m.invalidateSize(); }, 100);
+}
+
+var identifyLocMap = null;
+var identifyLocMarker = null;
+var identifyLocTimeout = null;
+
+var catIcon = null;
+function getCatIcon() {
+  if (!catIcon && typeof L !== 'undefined') {
+    catIcon = L.divIcon({
+      className: '',
+      html: '<div style="font-size:0.85rem;line-height:1;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))">🐱</div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 14],
+      popupAnchor: [0, -16]
+    });
+  }
+  return catIcon;
+}
+
+function onIdentifyLocationInput() {
+  clearTimeout(identifyLocTimeout);
+  const val = document.getElementById('identify-location-input').value.trim();
+  if (!val) {
+    document.getElementById('identify-location-map').style.display = 'none';
+    return;
+  }
+  identifyLocTimeout = setTimeout(function() {
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(val))
+      .then(r => r.json())
+      .then(data => {
+        if (!data || !data.length) return;
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        const mapDiv = document.getElementById('identify-location-map');
+        mapDiv.style.display = 'block';
+        if (!identifyLocMap) {
+          identifyLocMap = L.map('identify-location-map').setView([lat, lng], 15);
+          L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap © CARTO'
+          }).addTo(identifyLocMap);
+          identifyLocMarker = L.marker([lat, lng], { icon: getCatIcon() }).addTo(identifyLocMap);
+        } else {
+          identifyLocMap.setView([lat, lng], 15);
+          identifyLocMarker.setLatLng([lat, lng]);
+          setTimeout(() => identifyLocMap.invalidateSize(), 100);
+        }
+      }).catch(() => {});
+  }, 800);
+}
+
+function toggleExisting(btn) {
+  var section = document.getElementById('section-existing');
+  var isOpen = section.style.display === 'block';
+  section.style.display = isOpen ? 'none' : 'block';
+  btn.className = isOpen ? 'btn btn-secondary' : 'btn';
+  if (isOpen) {
     document.getElementById('existing_photo_id').value = '';
     document.querySelectorAll('.existing-photo-thumb').forEach(function(t){ t.style.borderColor='transparent'; });
-  } else {
-    document.getElementById('identify-input').removeAttribute('required');
   }
 }
 
@@ -261,6 +369,7 @@ function selectExistingPhoto(el) {
   el.style.borderColor = 'var(--purple)';
   document.getElementById('existing_photo_id').value = el.dataset.id;
 }
+
 </script>
 
 {% endblock %}

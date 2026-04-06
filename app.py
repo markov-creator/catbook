@@ -6,7 +6,8 @@ import threading
 import hashlib
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
+import secrets
 import urllib.parse
 from functools import wraps
 
@@ -136,8 +137,11 @@ def local_save(pil_img, public_id):
 
 
 def local_delete(filename):
-    """Delete a local image file."""
-    if not filename or filename.startswith('http'):
+    """Delete a local image file or a Cloudinary image by URL."""
+    if not filename:
+        return
+    if filename.startswith('http'):
+        _cloudinary_delete(filename)
         return
     try:
         path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
@@ -145,6 +149,38 @@ def local_delete(filename):
             os.remove(path)
     except Exception as e:
         print(f"local_delete error: {e}")
+
+
+def _cloudinary_delete(url):
+    """Delete an image from Cloudinary by its URL."""
+    if not CLOUDINARY_API_KEY or not CLOUDINARY_API_SECRET or not CLOUDINARY_CLOUD_NAME:
+        return
+    try:
+        # Extract public_id from URL:
+        # https://res.cloudinary.com/<cloud>/image/upload/v12345/catbook/1/abc.jpg
+        # → public_id = catbook/1/abc
+        import re
+        match = re.search(r'/image/upload/(?:v\d+/)?(.+)$', url)
+        if not match:
+            return
+        public_id = re.sub(r'\.[^.]+$', '', match.group(1))  # strip extension
+        ts = str(int(time.time()))
+        params_to_sign = f'public_id={public_id}&timestamp={ts}'
+        signature = hashlib.sha256((params_to_sign + CLOUDINARY_API_SECRET).encode()).hexdigest()
+        data = urllib.parse.urlencode({
+            'public_id': public_id,
+            'timestamp': ts,
+            'api_key': CLOUDINARY_API_KEY,
+            'signature': signature,
+        }).encode()
+        req = urllib.request.Request(
+            f'https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/destroy',
+            data=data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
+        urllib.request.urlopen(req, timeout=15)
+    except Exception as e:
+        print(f'_cloudinary_delete error: {e}')
 
 
 # ---------- Feature extraction ----------
@@ -317,6 +353,11 @@ def init_db():
         # add home_bg column if missing
         try:
             db.execute('ALTER TABLE users ADD COLUMN home_bg TEXT')
+        except Exception:
+            pass
+        # add banned column if missing
+        try:
+            db.execute('ALTER TABLE users ADD COLUMN banned INTEGER NOT NULL DEFAULT 0')
         except Exception:
             pass
         # add features column if missing
@@ -515,6 +556,14 @@ def init_db():
             ip TEXT,
             logged_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            expires_at DATETIME NOT NULL,
+            used INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )''')
         try:
             db.execute('ALTER TABLE cat_relations ADD COLUMN tree_id INTEGER')
         except Exception:
@@ -544,6 +593,8 @@ def init_db():
             post_id INTEGER NOT NULL,
             user_id INTEGER NOT NULL,
             location_text TEXT,
+            latitude REAL,
+            longitude REAL,
             fed INTEGER NOT NULL DEFAULT 0,
             health_status TEXT NOT NULL DEFAULT 'בריא',
             sighted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -552,6 +603,14 @@ def init_db():
             FOREIGN KEY (post_id) REFERENCES posts(id),
             FOREIGN KEY (user_id) REFERENCES users(id)
         )''')
+        try:
+            db.execute('ALTER TABLE street_cat_sightings ADD COLUMN latitude REAL')
+        except Exception:
+            pass
+        try:
+            db.execute('ALTER TABLE street_cat_sightings ADD COLUMN longitude REAL')
+        except Exception:
+            pass
         db.execute('''CREATE TABLE IF NOT EXISTS cat_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             cat_id INTEGER NOT NULL,
@@ -670,16 +729,23 @@ def login():
         user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
         ip = request.remote_addr
         if user and check_password_hash(user['password'], password):
-            session['user_id'] = user['id']
-            session['username'] = user['username']
-            db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,1,?)',
-                       (username, user['id'], ip))
+            if user['banned']:
+                db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,0,?)',
+                           (username, user['id'], ip))
+                db.commit()
+                flash('החשבון חסום. פנה למנהל המערכת.')
+            else:
+                session['user_id'] = user['id']
+                session['username'] = user['username']
+                db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,1,?)',
+                           (username, user['id'], ip))
+                db.commit()
+                return redirect(url_for('index'))
+        else:
+            db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,0,?)',
+                       (username, user['id'] if user else None, ip))
             db.commit()
-            return redirect(url_for('index'))
-        db.execute('INSERT INTO login_logs (username, user_id, success, ip) VALUES (?,?,0,?)',
-                   (username, user['id'] if user else None, ip))
-        db.commit()
-        flash('שם משתמש או סיסמה שגויים')
+            flash('שם משתמש או סיסמה שגויים')
     return render_template('login.html')
 
 
@@ -688,9 +754,12 @@ def register():
     if request.method == 'POST':
         username = request.form['username'].strip()
         password = request.form['password']
+        password2 = request.form.get('password2', '')
         email = request.form.get('email', '').strip() or None
         if not username or not password:
             flash('נא למלא את כל השדות')
+        elif password != password2:
+            flash('הסיסמאות אינן תואמות')
         else:
             db = get_db()
             try:
@@ -702,6 +771,59 @@ def register():
             except sqlite3.IntegrityError:
                 flash('שם המשתמש כבר תפוס')
     return render_template('register.html')
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip()
+        db = get_db()
+        user = db.execute('SELECT id, username FROM users WHERE email=?', (email,)).fetchone()
+        if user:
+            token = secrets.token_urlsafe(32)
+            expires = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+            db.execute('INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?,?,?)',
+                       (user['id'], token, expires))
+            db.commit()
+            reset_url = url_for('reset_password', token=token, _external=True)
+            send_email(
+                email,
+                'איפוס סיסמה - CatBook',
+                f'<div dir="rtl"><p>שלום {user["username"]},</p>'
+                f'<p>לחץ על הקישור הבא לאיפוס הסיסמה שלך (בתוקף שעה אחת):</p>'
+                f'<p><a href="{reset_url}">{reset_url}</a></p>'
+                f'<p>אם לא ביקשת איפוס סיסמה, התעלם מהודעה זו.</p></div>'
+            )
+        flash('אם האימייל קיים במערכת, נשלח אליו קישור לאיפוס סיסמה')
+        return redirect(url_for('login'))
+    return render_template('forgot_password.html')
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
+        (token,)
+    ).fetchone()
+    if not row:
+        flash('הקישור אינו בתוקף או שכבר נעשה בו שימוש')
+        return redirect(url_for('login'))
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        password2 = request.form.get('password2', '')
+        if not password:
+            flash('נא להזין סיסמה')
+        elif password != password2:
+            flash('הסיסמאות אינן תואמות')
+        else:
+            db.execute('UPDATE users SET password=? WHERE id=?',
+                       (generate_password_hash(password), row['user_id']))
+            db.execute('UPDATE password_reset_tokens SET used=1 WHERE id=?', (row['id'],))
+            db.commit()
+            flash('הסיסמה שונתה בהצלחה! כעת תוכל להתחבר')
+            return redirect(url_for('login'))
+    return render_template('reset_password.html', token=token)
 
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -727,6 +849,30 @@ def settings():
             except sqlite3.IntegrityError:
                 flash('שם המשתמש כבר תפוס', 'warning')
     return render_template('settings.html', user=user)
+
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    db = get_db()
+    uid = session['user_id']
+    if request.method == 'POST':
+        current = request.form.get('current_password', '')
+        new_pw = request.form.get('password', '')
+        new_pw2 = request.form.get('password2', '')
+        user = db.execute('SELECT password FROM users WHERE id=?', (uid,)).fetchone()
+        if not check_password_hash(user['password'], current):
+            flash('הסיסמה הנוכחית שגויה', 'warning')
+        elif not new_pw:
+            flash('נא להזין סיסמה חדשה', 'warning')
+        elif new_pw != new_pw2:
+            flash('הסיסמאות אינן תואמות', 'warning')
+        else:
+            db.execute('UPDATE users SET password=? WHERE id=?', (generate_password_hash(new_pw), uid))
+            db.commit()
+            flash('הסיסמה שונתה בהצלחה')
+            return redirect(url_for('settings'))
+    return render_template('change_password.html')
 
 
 @app.route('/logout')
@@ -821,6 +967,17 @@ def extract_features_api():
             os.remove(temp_path)
 
 
+PHOTO_LIMIT = 70
+
+def _user_photo_count(db, uid):
+    row = db.execute('''
+        SELECT COUNT(*) as cnt FROM cat_photos cp
+        JOIN cats c ON c.id = cp.cat_id
+        WHERE c.user_id = ?
+    ''', (uid,)).fetchone()
+    return row['cnt'] if row else 0
+
+
 @app.route('/cats/add', methods=['GET', 'POST'])
 @login_required
 def add_cat():
@@ -837,12 +994,16 @@ def add_cat():
         db.commit()
 
         all_feats = []
+        uid = session['user_id']
         # Accept Cloudinary URLs with optional feature tokens
         photo_urls = request.form.getlist('photo_urls')
         feature_tokens = request.form.getlist('feature_tokens')
         for photo_url_val, token in zip(photo_urls, feature_tokens + [''] * len(photo_urls)):
             if not photo_url_val:
                 continue
+            if _user_photo_count(db, uid) >= PHOTO_LIMIT:
+                flash(f'הגעת למכסת התמונות ({PHOTO_LIMIT} תמונות). מחק תמונות ישנות כדי להוסיף חדשות.', 'warning')
+                break
             feat_json = None
             if token:
                 tok_row = db.execute('SELECT features FROM feature_tokens WHERE token=?', (token,)).fetchone()
@@ -893,6 +1054,9 @@ def add_photo(cat_id):
                      (cat_id, session['user_id'])).fetchone()
     if not cat:
         return jsonify({'error': 'לא נמצא'}), 404
+
+    if _user_photo_count(db, session['user_id']) >= PHOTO_LIMIT:
+        return jsonify({'error': f'הגעת למכסת התמונות ({PHOTO_LIMIT} תמונות)'}), 400
 
     # Accept Cloudinary URL (direct browser upload)
     cloudinary_url = request.form.get('photo_url', '')
@@ -1125,8 +1289,11 @@ def cat_details_page(cat_id):
                 'saved_at': h['saved_at'][:16].replace('T', ' '),
                 'username': h['username']} for h in history_rows]
     _check_birthday_event(db, cat_id, uid, d.get('birth_date'))
+    photo_row = db.execute('SELECT filename FROM cat_photos WHERE cat_id=? LIMIT 1', (cat_id,)).fetchone()
+    cat_photo = photo_row['filename'] if photo_row else None
     return render_template('cat_details.html', cat=cat, d=d, tag_pairs=tag_pairs,
-                           is_owner=can_edit, shared_with=shared_with, history=history)
+                           is_owner=can_edit, shared_with=shared_with, history=history,
+                           cat_photo=cat_photo)
 
 
 @app.route('/cats/<int:cat_id>/details/history/<int:history_id>')
@@ -1273,6 +1440,16 @@ def cat_event_add(cat_id):
         'INSERT INTO cat_events (cat_id, event_type, event_time, details, user_id) VALUES (?,?,?,?,?)',
         (cat_id, event_type, event_time, details, session['user_id'])
     )
+    # Sync back to cat_details
+    event_to_field = {'אכילה': 'last_fed', 'טיפול': 'last_treated', 'עיקור': 'neuter_date'}
+    field = event_to_field.get(event_type)
+    if field:
+        existing = db.execute(f'SELECT {field} FROM cat_details WHERE cat_id=?', (cat_id,)).fetchone()
+        if existing is None:
+            db.execute('INSERT OR IGNORE INTO cat_details (cat_id) VALUES (?)', (cat_id,))
+            db.execute(f'UPDATE cat_details SET {field}=? WHERE cat_id=?', (event_time, cat_id))
+        elif not existing[field] or event_time > existing[field]:
+            db.execute(f'UPDATE cat_details SET {field}=? WHERE cat_id=?', (event_time, cat_id))
     db.commit()
     flash('האירוע נוסף!')
     return redirect(url_for('cat_events_page', cat_id=cat_id))
@@ -1355,9 +1532,20 @@ def identify():
         WHERE c.user_id = ? AND cp.features IS NOT NULL ORDER BY c.name, cp.id
     ''', (uid,)).fetchall()
 
+    identify_lat = None
+    identify_lng = None
+
     if request.method == 'POST':
         location = request.form.get('location', '').strip() or None
         location_precise = request.form.get('location_precise', '').strip() or None
+        try:
+            identify_lat = float(request.form.get('latitude')) if request.form.get('latitude') else None
+        except (TypeError, ValueError):
+            identify_lat = None
+        try:
+            identify_lng = float(request.form.get('longitude')) if request.form.get('longitude') else None
+        except (TypeError, ValueError):
+            identify_lng = None
         existing_photo_id = request.form.get('existing_photo_id', '').strip()
 
         if existing_photo_id:
@@ -1537,7 +1725,8 @@ def identify():
         qf = query_feat if isinstance(query_feat, list) else query_feat.tolist()
         result['query_features'] = json.dumps(qf) if not existing_photo_id else None
 
-    return render_template('identify.html', result=result, my_photos=my_photos)
+    return render_template('identify.html', result=result, my_photos=my_photos,
+                           identify_lat=identify_lat, identify_lng=identify_lng)
 
 
 @app.route('/identify/post', methods=['POST'])
@@ -1866,7 +2055,7 @@ def notifications():
 
     query = '''
         SELECT n.id, n.type, n.photo, n.cat_id, n.is_read, n.created_at, n.location, n.location_precise,
-               n.tree_id, u.username as from_username, c.name as cat_name, ft.name as tree_name
+               n.tree_id, n.message, u.username as from_username, c.name as cat_name, ft.name as tree_name
         FROM notifications n
         LEFT JOIN users u ON u.id = n.from_user_id
         LEFT JOIN cats c ON c.id = n.cat_id
@@ -1908,6 +2097,7 @@ def notifications():
             'location_precise': n['location_precise'],
             'tree_id': n['tree_id'],
             'tree_name': n['tree_name'],
+            'message': n['message'],
         })
     # Mark all as read
     db.execute('UPDATE notifications SET is_read=1 WHERE user_id=?', (uid,))
@@ -2580,10 +2770,11 @@ def admin_logout():
 def admin_dashboard():
     db = get_db()
     users = db.execute('''
-        SELECT u.id, u.username, u.email,
+        SELECT u.id, u.username, u.email, u.banned,
                COUNT(DISTINCT c.id)  as cat_count,
                COUNT(DISTINCT po.id) as post_count,
-               COUNT(DISTINCT f.id)  as friend_count
+               COUNT(DISTINCT f.id)  as friend_count,
+               (SELECT COUNT(*) FROM cat_photos cp JOIN cats cc ON cc.id=cp.cat_id WHERE cc.user_id=u.id) as photo_count
         FROM users u
         LEFT JOIN cats c  ON c.user_id  = u.id
         LEFT JOIN posts po ON po.user_id = u.id
@@ -2613,11 +2804,42 @@ def admin_dashboard():
         FROM login_logs ORDER BY logged_at DESC LIMIT 200
     ''').fetchall()
 
+    cats = db.execute('''
+        SELECT c.id, c.name, c.user_id, u.username,
+               COUNT(cp.id) as photo_count
+        FROM cats c
+        JOIN users u ON u.id = c.user_id
+        LEFT JOIN cat_photos cp ON cp.cat_id = c.id
+        GROUP BY c.id ORDER BY u.username, c.name
+    ''').fetchall()
+
+    street_cats = db.execute('''
+        SELECT sc.id, sc.auto_number, sc.nickname, sc.created_by, u.username as creator,
+               COUNT(scs.id) as sighting_count
+        FROM street_cats sc
+        JOIN users u ON u.id = sc.created_by
+        LEFT JOIN street_cat_sightings scs ON scs.street_cat_id = sc.id
+        GROUP BY sc.id ORDER BY sc.auto_number
+    ''').fetchall()
+
+    sightings = db.execute('''
+        SELECT scs.id, scs.street_cat_id, scs.location_text, scs.health, scs.sighted_at,
+               sc.auto_number, sc.nickname, u.username as reporter, p.photo
+        FROM street_cat_sightings scs
+        JOIN street_cats sc ON sc.id = scs.street_cat_id
+        JOIN users u ON u.id = scs.reported_by
+        LEFT JOIN posts p ON p.id = scs.post_id
+        ORDER BY scs.sighted_at DESC LIMIT 200
+    ''').fetchall()
+
     return render_template('admin_dashboard.html',
                            users=users,
                            friendships=friendships,
                            posts=posts,
-                           logs=logs)
+                           logs=logs,
+                           cats=cats,
+                           street_cats=street_cats,
+                           sightings=sightings)
 
 
 @app.route('/admin/user/<int:uid>/reset', methods=['POST'])
@@ -2689,6 +2911,95 @@ def admin_delete_friendship(fid):
     return redirect(url_for('admin_dashboard') + '#friends')
 
 
+@app.route('/admin/user/<int:uid>/edit', methods=['POST'])
+@admin_required
+def admin_edit_user(uid):
+    db = get_db()
+    new_username = request.form.get('username', '').strip()
+    new_email = request.form.get('email', '').strip() or None
+    if not new_username:
+        flash('שם משתמש לא יכול להיות ריק', 'admin_error')
+        return redirect(url_for('admin_dashboard') + '#users')
+    try:
+        db.execute('UPDATE users SET username=?, email=? WHERE id=?', (new_username, new_email, uid))
+        db.commit()
+        flash(f'פרטי משתמש עודכנו ל-"{new_username}"', 'admin_info')
+    except Exception:
+        flash('שגיאה: שם המשתמש כבר תפוס', 'admin_error')
+    return redirect(url_for('admin_dashboard') + '#users')
+
+
+@app.route('/admin/user/<int:uid>/ban', methods=['POST'])
+@admin_required
+def admin_ban_user(uid):
+    db = get_db()
+    user = db.execute('SELECT username, banned FROM users WHERE id=?', (uid,)).fetchone()
+    if not user:
+        return redirect(url_for('admin_dashboard') + '#users')
+    new_state = 0 if user['banned'] else 1
+    db.execute('UPDATE users SET banned=? WHERE id=?', (new_state, uid))
+    db.commit()
+    action = 'חסום' if new_state else 'שוחרר מחסימה'
+    flash(f'משתמש "{user["username"]}" {action}', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#users')
+
+
+@app.route('/admin/user/<int:uid>/notify', methods=['POST'])
+@admin_required
+def admin_notify_user(uid):
+    db = get_db()
+    message = request.form.get('message', '').strip()
+    if not message:
+        return redirect(url_for('admin_dashboard') + '#users')
+    db.execute(
+        "INSERT INTO notifications (user_id, type, message) VALUES (?, 'admin_message', ?)",
+        (uid, message)
+    )
+    db.commit()
+    user = db.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    flash(f'הודעה נשלחה ל-"{user["username"]}"', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#users')
+
+
+@app.route('/admin/cat/<int:cat_id>/delete', methods=['POST'])
+@admin_required
+def admin_delete_cat(cat_id):
+    db = get_db()
+    cat = db.execute('SELECT name FROM cats WHERE id=?', (cat_id,)).fetchone()
+    if not cat:
+        return redirect(url_for('admin_dashboard') + '#cats')
+    for row in db.execute('SELECT filename FROM cat_photos WHERE cat_id=?', (cat_id,)):
+        local_delete(row['filename'])
+    db.execute('DELETE FROM cat_photos WHERE cat_id=?', (cat_id,))
+    db.execute('DELETE FROM cat_details WHERE cat_id=?', (cat_id,))
+    db.execute('DELETE FROM cat_relations WHERE cat_id=? OR related_cat_id=?', (cat_id, cat_id))
+    db.execute('DELETE FROM cat_events WHERE cat_id=?', (cat_id,))
+    db.execute('DELETE FROM notifications WHERE cat_id=?', (cat_id,))
+    db.execute('DELETE FROM cats WHERE id=?', (cat_id,))
+    db.commit()
+    flash(f'חתול "{cat["name"]}" נמחק', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#cats')
+
+
+@app.route('/admin/sighting/<int:sid>/delete', methods=['POST'])
+@admin_required
+def admin_delete_sighting(sid):
+    db = get_db()
+    sighting = db.execute('SELECT post_id, street_cat_id FROM street_cat_sightings WHERE id=?', (sid,)).fetchone()
+    if not sighting:
+        return redirect(url_for('admin_dashboard') + '#streetcats')
+    if sighting['post_id']:
+        post = db.execute('SELECT photo FROM posts WHERE id=?', (sighting['post_id'],)).fetchone()
+        if post and post['photo']:
+            local_delete(post['photo'])
+        db.execute('DELETE FROM post_comments WHERE post_id=?', (sighting['post_id'],))
+        db.execute('DELETE FROM posts WHERE id=?', (sighting['post_id'],))
+    db.execute('DELETE FROM street_cat_sightings WHERE id=?', (sid,))
+    db.commit()
+    flash('הופעה נמחקה', 'admin_info')
+    return redirect(url_for('admin_dashboard') + '#streetcats')
+
+
 # ───────────────────────────── Street Cats ──────────────────────────────
 
 def _next_street_cat_number(db):
@@ -2712,6 +3023,16 @@ def street_cat_create():
     caption = request.form.get('caption', '').strip()
     photo = request.form.get('photo', '').strip() or None
     features_json = request.form.get('features_json', '').strip() or None
+    latitude = request.form.get('latitude')
+    longitude = request.form.get('longitude')
+    try:
+        latitude = float(latitude) if latitude else None
+    except (TypeError, ValueError):
+        latitude = None
+    try:
+        longitude = float(longitude) if longitude else None
+    except (TypeError, ValueError):
+        longitude = None
 
     # Upload temp photo to Cloudinary for permanent storage
     if photo and not photo.startswith('http'):
@@ -2755,7 +3076,7 @@ def street_cat_profile(sc_id):
     sc = db.execute('SELECT * FROM street_cats WHERE id=?', (sc_id,)).fetchone()
     if not sc:
         return redirect(url_for('posts'))
-    sightings = db.execute('''
+    sight_rows = db.execute('''
         SELECT s.*, u.username, p.photo, p.caption
         FROM street_cat_sightings s
         JOIN users u ON u.id = s.user_id
@@ -2763,6 +3084,7 @@ def street_cat_profile(sc_id):
         WHERE s.street_cat_id = ?
         ORDER BY s.sighted_at DESC
     ''', (sc_id,)).fetchall()
+    sightings = [dict(row) for row in sight_rows]
     adopted_cat = None
     if sc['adopted_by_cat_id']:
         adopted_cat = db.execute('SELECT * FROM cats WHERE id=?', (sc['adopted_by_cat_id'],)).fetchone()
@@ -2787,6 +3109,16 @@ def street_cat_add_sighting(sc_id):
     caption = request.form.get('caption', '').strip()
     photo = request.form.get('photo', '').strip() or None
     features_json = request.form.get('features_json', '').strip() or None
+    latitude = request.form.get('latitude')
+    longitude = request.form.get('longitude')
+    try:
+        latitude = float(latitude) if latitude else None
+    except (TypeError, ValueError):
+        latitude = None
+    try:
+        longitude = float(longitude) if longitude else None
+    except (TypeError, ValueError):
+        longitude = None
 
     # Handle direct file upload from the add-sighting form
     uploaded_file = request.files.get('photo_file')
@@ -2822,9 +3154,9 @@ def street_cat_add_sighting(sc_id):
     post_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
     db.execute(
         '''INSERT INTO street_cat_sightings
-           (street_cat_id, post_id, user_id, location_text, fed, health_status, sighted_at, features)
-           VALUES (?,?,?,?,?,?,?,?)''',
-        (sc_id, post_id, uid, location, fed, health, sighted_at, features_json)
+           (street_cat_id, post_id, user_id, location_text, latitude, longitude, fed, health_status, sighted_at, features)
+           VALUES (?,?,?,?,?,?,?,?,?,?)''',
+        (sc_id, post_id, uid, location, latitude, longitude, fed, health, sighted_at, features_json)
     )
     # notify all previous reporters (excluding current user)
     sc_row = db.execute('SELECT created_by, nickname, auto_number FROM street_cats WHERE id=?', (sc_id,)).fetchone()
@@ -2912,6 +3244,65 @@ def street_cat_delete(sc_id):
     db.commit()
     flash('חתול הרחוב נמחק')
     return redirect(url_for('street_cats_list'))
+
+
+@app.route('/map')
+@login_required
+def map_page():
+    uid = session['user_id']
+    db = get_db()
+
+    friend_rows = db.execute('''
+        SELECT CASE WHEN requester_id=? THEN receiver_id ELSE requester_id END as fid
+        FROM friendships WHERE (requester_id=? OR receiver_id=?) AND status='accepted'
+    ''', (uid, uid, uid)).fetchall()
+    visible_user_ids = [uid] + [r['fid'] for r in friend_rows]
+
+    # Latest sighting per street cat that has location_text
+    street_rows = db.execute('''
+        SELECT s.location_text, s.latitude, s.longitude, s.sighted_at,
+               sc.nickname, sc.auto_number, sc.id as sc_id, p.photo
+        FROM street_cat_sightings s
+        JOIN street_cats sc ON sc.id = s.street_cat_id
+        LEFT JOIN posts p ON p.id = s.post_id
+        WHERE s.location_text IS NOT NULL AND s.location_text != ''
+        ORDER BY s.sighted_at DESC
+    ''').fetchall()
+    seen_sc = set()
+    street_data = []
+    for s in street_rows:
+        if s['sc_id'] not in seen_sc:
+            seen_sc.add(s['sc_id'])
+            street_data.append(dict(s))
+
+    # Latest identified/similar notification per cat for user + friends
+    placeholders = ','.join('?' * len(visible_user_ids))
+    cat_rows = db.execute(f'''
+        SELECT n.location, n.created_at, n.cat_id, c.name as cat_name,
+               u.id as owner_id, u.username,
+               (SELECT filename FROM cat_photos WHERE cat_id=c.id LIMIT 1) as photo
+        FROM notifications n
+        JOIN cats c ON c.id = n.cat_id
+        JOIN users u ON u.id = c.user_id
+        WHERE n.type IN ('identified', 'similar')
+        AND n.location IS NOT NULL AND n.location != ''
+        AND c.user_id IN ({placeholders})
+        ORDER BY n.created_at DESC
+    ''', visible_user_ids).fetchall()
+    seen_cats = set()
+    cat_data = []
+    for n in cat_rows:
+        if n['cat_id'] not in seen_cats:
+            seen_cats.add(n['cat_id'])
+            d = dict(n)
+            d['photo_url'] = photo_url(n['photo']) if n['photo'] else ''
+            cat_data.append(d)
+
+    seen_sc = set()
+    for s in street_data:
+        s['photo_url'] = photo_url(s['photo']) if s['photo'] else ''
+
+    return render_template('map.html', street_data=street_data, cat_data=cat_data)
 
 
 @app.route('/street-cats')

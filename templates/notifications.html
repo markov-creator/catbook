@@ -55,6 +55,10 @@
           המשתמש <strong>{{ n.from_username }}</strong> העלה תמונה שדומה לחתול שלך
           {% if n.cat_name %}<strong>"{{ n.cat_name }}"</strong>{% endif %}
         </div>
+      {% elif n.type == 'admin_message' %}
+        <div class="notif-text">
+          🛡️ <strong>הודעה ממנהל המערכת:</strong> {{ n.message }}
+        </div>
       {% elif n.type == 'tree_share' %}
         <div class="notif-text">
           🐈🌳 המשתמש <strong>{{ n.from_username }}</strong> שיתף איתך את עץ המשפחה

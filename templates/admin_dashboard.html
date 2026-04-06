@@ -13,47 +13,69 @@
   header a { color:#e0c0ff; font-size:.88rem; text-decoration:none; }
   header a:hover { color:#fff; }
 
-  .container { max-width:1100px; margin:28px auto; padding:0 20px; }
+  .container { max-width:1200px; margin:28px auto; padding:0 20px; }
 
-  /* Flash */
   .flash-admin { background:#e8f5e9; border:1.5px solid #4caf50; border-radius:10px;
                  padding:12px 18px; margin-bottom:20px; color:#2e7d32; font-weight:bold;
                  word-break:break-all; }
+  .flash-admin-error { background:#ffebee; border:1.5px solid #f44336; border-radius:10px;
+                 padding:12px 18px; margin-bottom:20px; color:#c00; font-weight:bold; }
 
-  /* Tabs */
-  .tabs { display:flex; gap:0; margin-bottom:0; }
-  .tab { padding:10px 24px; background:#e8d5f7; border-radius:12px 12px 0 0; cursor:pointer;
-         font-weight:bold; color:#6a0dad; border:2px solid transparent; font-family:'Rubik',sans-serif; font-size:.95rem; }
+  .tabs { display:flex; gap:0; flex-wrap:wrap; margin-bottom:0; }
+  .tab { padding:10px 20px; background:#e8d5f7; border-radius:12px 12px 0 0; cursor:pointer;
+         font-weight:bold; color:#6a0dad; border:2px solid transparent; font-family:'Rubik',sans-serif; font-size:.9rem; }
   .tab.active { background:#fff; border-color:#c9a0e8; border-bottom-color:#fff; color:#3d006e; }
   .tab-content { display:none; background:#fff; border-radius:0 12px 12px 12px;
                  border:2px solid #c9a0e8; padding:20px; }
   .tab-content.active { display:block; }
 
-  /* Table */
   table { width:100%; border-collapse:collapse; font-size:.88rem; }
   th { background:#f3e8ff; color:#6a0dad; padding:10px 12px; text-align:right; font-weight:bold; }
   td { padding:9px 12px; border-bottom:1px solid #f0e8ff; vertical-align:middle; }
   tr:hover td { background:#faf5ff; }
 
-  /* Buttons */
   .btn { padding:5px 12px; border-radius:7px; border:none; cursor:pointer;
          font-family:'Rubik',sans-serif; font-weight:bold; font-size:.82rem; }
   .btn-red   { background:#ffebee; color:#c00; border:1px solid #ffcdd2; }
   .btn-red:hover { background:#ffcdd2; }
   .btn-blue  { background:#e3f2fd; color:#1565c0; border:1px solid #bbdefb; }
   .btn-blue:hover { background:#bbdefb; }
+  .btn-orange { background:#fff3e0; color:#e65100; border:1px solid #ffe0b2; }
+  .btn-orange:hover { background:#ffe0b2; }
+  .btn-green { background:#e8f5e9; color:#2e7d32; border:1px solid #c8e6c9; }
+  .btn-green:hover { background:#c8e6c9; }
   .btn-gray  { background:#f5f5f5; color:#555; border:1px solid #ddd; }
 
-  /* Post photo */
   .post-thumb { width:50px; height:50px; object-fit:cover; border-radius:6px; }
 
   .badge { display:inline-block; background:#e8d5f7; color:#6a0dad; border-radius:20px;
            padding:2px 9px; font-size:.78rem; font-weight:bold; }
   .badge-green { background:#e8f5e9; color:#2e7d32; }
   .badge-orange { background:#fff3e0; color:#e65100; }
+  .badge-red { background:#ffebee; color:#c00; }
 
   .temp-pw { font-family:monospace; background:#fff9c4; padding:2px 8px; border-radius:4px;
              font-size:1rem; letter-spacing:1px; }
+
+  .actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+
+  /* Inline edit row */
+  .edit-row { display:none; background:#faf5ff; }
+  .edit-row td { padding:8px 12px; }
+  .edit-row input[type=text], .edit-row input[type=email] {
+    border:1px solid #c9a0e8; border-radius:6px; padding:4px 8px;
+    font-family:'Rubik',sans-serif; font-size:.85rem; width:140px;
+  }
+
+  /* Notify form */
+  .notify-row { display:none; background:#fffde7; }
+  .notify-row td { padding:8px 12px; }
+  .notify-row input[type=text] {
+    border:1px solid #ffd54f; border-radius:6px; padding:4px 8px;
+    font-family:'Rubik',sans-serif; font-size:.85rem; width:280px;
+  }
+
+  .banned-row td { opacity:.55; }
 </style>
 </head>
 <body>
@@ -67,13 +89,15 @@
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, msg in messages %}
       {% if 'admin' in category %}
-        <div class="flash-admin">{{ msg }}</div>
+        <div class="flash-admin {% if 'error' in category %}flash-admin-error{% endif %}">{{ msg }}</div>
       {% endif %}
     {% endfor %}
   {% endwith %}
 
   <div class="tabs">
     <button class="tab active" onclick="showTab('users', this)">👤 משתמשים ({{ users|length }})</button>
+    <button class="tab" onclick="showTab('cats', this)">🐱 חתולים ({{ cats|length }})</button>
+    <button class="tab" onclick="showTab('streetcats', this)">🐾 חתולי רחוב ({{ street_cats|length }})</button>
     <button class="tab" onclick="showTab('friends', this)">🤝 חברויות ({{ friendships|length }})</button>
     <button class="tab" onclick="showTab('posts', this)">📸 פוסטים ({{ posts|length }})</button>
     <button class="tab" onclick="showTab('logs', this)">📋 כניסות ({{ logs|length }})</button>
@@ -83,27 +107,143 @@
   <div id="tab-users" class="tab-content active">
     <table>
       <tr>
-        <th>ID</th><th>שם משתמש</th><th>אימייל</th><th>חתולים</th><th>פוסטים</th><th>חברים</th><th>פעולות</th>
+        <th>ID</th><th>שם משתמש</th><th>אימייל</th><th>חתולים</th><th>תמונות</th><th>פוסטים</th><th>חברים</th><th>סטטוס</th><th>פעולות</th>
       </tr>
       {% for u in users %}
-      <tr>
+      <tr {% if u.banned %}class="banned-row"{% endif %}>
         <td><span class="badge">{{ u.id }}</span></td>
         <td><strong>{{ u.username }}</strong></td>
         <td>{{ u.email or '—' }}</td>
         <td>{{ u.cat_count }}</td>
+        <td>{{ u.photo_count }}/70</td>
         <td>{{ u.post_count }}</td>
         <td>{{ u.friend_count }}</td>
-        <td style="display:flex;gap:6px;flex-wrap:wrap;">
-          <form method="post" action="{{ url_for('admin_reset_password', uid=u.id) }}">
-            <button class="btn btn-blue" type="submit"
-                    onclick="return confirm('לאפס סיסמה של {{ u.username }}?')">🔑 אפס סיסמה</button>
-          </form>
-          <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}">
-            <button class="btn btn-red" type="submit"
-                    onclick="return confirm('למחוק לצמיתות את המשתמש {{ u.username }} וכל הנתונים שלו?')">🗑️ מחק</button>
+        <td>
+          {% if u.banned %}
+            <span class="badge badge-red">🚫 חסום</span>
+          {% else %}
+            <span class="badge badge-green">✓ פעיל</span>
+          {% endif %}
+        </td>
+        <td>
+          <div class="actions">
+            <button class="btn btn-gray" onclick="toggleEdit({{ u.id }})">✏️ ערוך</button>
+            <form method="post" action="{{ url_for('admin_reset_password', uid=u.id) }}">
+              <button class="btn btn-blue" type="submit"
+                      onclick="return confirm('לאפס סיסמה של {{ u.username }}?')">🔑 סיסמה</button>
+            </form>
+            <form method="post" action="{{ url_for('admin_ban_user', uid=u.id) }}">
+              <button class="btn {% if u.banned %}btn-green{% else %}btn-orange{% endif %}" type="submit"
+                      onclick="return confirm('{% if u.banned %}לשחרר{% else %}לחסום{% endif %} את {{ u.username }}?')">
+                {% if u.banned %}✓ שחרר{% else %}🚫 חסום{% endif %}
+              </button>
+            </form>
+            <button class="btn btn-gray" onclick="toggleNotify({{ u.id }})">📨 הודעה</button>
+            <form method="post" action="{{ url_for('admin_delete_user', uid=u.id) }}">
+              <button class="btn btn-red" type="submit"
+                      onclick="return confirm('למחוק לצמיתות את המשתמש {{ u.username }} וכל הנתונים שלו?')">🗑️ מחק</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      <!-- Edit row -->
+      <tr class="edit-row" id="edit-row-{{ u.id }}">
+        <td colspan="9">
+          <form method="post" action="{{ url_for('admin_edit_user', uid=u.id) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:.85rem;font-weight:bold">שם משתמש:</label>
+            <input type="text" name="username" value="{{ u.username }}" required>
+            <label style="font-size:.85rem;font-weight:bold">אימייל:</label>
+            <input type="text" name="email" value="{{ u.email or '' }}">
+            <button class="btn btn-blue" type="submit">שמור</button>
+            <button class="btn btn-gray" type="button" onclick="toggleEdit({{ u.id }})">ביטול</button>
           </form>
         </td>
       </tr>
+      <!-- Notify row -->
+      <tr class="notify-row" id="notify-row-{{ u.id }}">
+        <td colspan="9">
+          <form method="post" action="{{ url_for('admin_notify_user', uid=u.id) }}" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:.85rem;font-weight:bold">הודעה ל-{{ u.username }}:</label>
+            <input type="text" name="message" placeholder="תוכן ההודעה..." required>
+            <button class="btn btn-blue" type="submit">📨 שלח</button>
+            <button class="btn btn-gray" type="button" onclick="toggleNotify({{ u.id }})">ביטול</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- ── Cats ── -->
+  <div id="tab-cats" class="tab-content">
+    <table>
+      <tr><th>ID</th><th>שם</th><th>בעלים</th><th>תמונות</th><th>פעולות</th></tr>
+      {% for c in cats %}
+      <tr>
+        <td><span class="badge">{{ c.id }}</span></td>
+        <td><strong>{{ c.name }}</strong></td>
+        <td>{{ c.username }}</td>
+        <td>{{ c.photo_count }}</td>
+        <td>
+          <form method="post" action="{{ url_for('admin_delete_cat', cat_id=c.id) }}">
+            <button class="btn btn-red" type="submit"
+                    onclick="return confirm('למחוק את החתול {{ c.name }} ואת כל התמונות שלו?')">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="text-align:center;color:#aaa;padding:20px">אין חתולים</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <!-- ── Street Cats ── -->
+  <div id="tab-streetcats" class="tab-content">
+    <h3 style="margin-bottom:1rem;color:#6a0dad">חתולי רחוב</h3>
+    <table style="margin-bottom:2rem">
+      <tr><th>#</th><th>כינוי</th><th>מדריח</th><th>הופעות</th><th>פעולות</th></tr>
+      {% for sc in street_cats %}
+      <tr>
+        <td><span class="badge">{{ sc.auto_number }}</span></td>
+        <td>{{ sc.nickname or '—' }}</td>
+        <td>{{ sc.creator }}</td>
+        <td>{{ sc.sighting_count }}</td>
+        <td>
+          <form method="post" action="{{ url_for('street_cat_delete', sc_id=sc.id) }}">
+            <button class="btn btn-red" type="submit"
+                    onclick="return confirm('למחוק חתול רחוב #{{ sc.auto_number }} ואת כל ההופעות?')">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" style="text-align:center;color:#aaa;padding:20px">אין חתולי רחוב</td></tr>
+      {% endfor %}
+    </table>
+
+    <h3 style="margin-bottom:1rem;color:#6a0dad">הופעות (200 אחרונות)</h3>
+    <table>
+      <tr><th>חתול</th><th>מדווח</th><th>מיקום</th><th>בריאות</th><th>תאריך</th><th>תמונה</th><th>פעולות</th></tr>
+      {% for s in sightings %}
+      <tr>
+        <td>{{ s.nickname or ('#' + s.auto_number|string) }}</td>
+        <td>{{ s.reporter }}</td>
+        <td>{{ (s.location_text or '—')[:30] }}</td>
+        <td>{{ s.health or '—' }}</td>
+        <td>{{ (s.sighted_at or '')[:10] }}</td>
+        <td>
+          {% if s.photo %}
+          <img class="post-thumb" src="{{ photo_url(s.photo) }}" alt="">
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          <form method="post" action="{{ url_for('admin_delete_sighting', sid=s.id) }}">
+            <button class="btn btn-red" type="submit"
+                    onclick="return confirm('למחוק הופעה זו?')">🗑️ מחק</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px">אין הופעות</td></tr>
       {% endfor %}
     </table>
   </div>
@@ -129,29 +269,6 @@
           </form>
         </td>
       </tr>
-      {% endfor %}
-    </table>
-  </div>
-
-  <!-- ── Login Logs ── -->
-  <div id="tab-logs" class="tab-content">
-    <table>
-      <tr><th>תאריך ושעה</th><th>משתמש</th><th>IP</th><th>סטטוס</th></tr>
-      {% for l in logs %}
-      <tr>
-        <td style="direction:ltr;text-align:right;font-size:.82rem;">{{ l.logged_at }}</td>
-        <td>{{ l.username }}</td>
-        <td style="direction:ltr;font-size:.82rem;">{{ l.ip or '—' }}</td>
-        <td>
-          {% if l.success %}
-            <span class="badge badge-green">✓ הצליח</span>
-          {% else %}
-            <span class="badge" style="background:#ffebee;color:#c00;">✗ נכשל</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% else %}
-      <tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">אין כניסות עדיין</td></tr>
       {% endfor %}
     </table>
   </div>
@@ -182,6 +299,29 @@
     </table>
   </div>
 
+  <!-- ── Login Logs ── -->
+  <div id="tab-logs" class="tab-content">
+    <table>
+      <tr><th>תאריך ושעה</th><th>משתמש</th><th>IP</th><th>סטטוס</th></tr>
+      {% for l in logs %}
+      <tr>
+        <td style="direction:ltr;text-align:right;font-size:.82rem;">{{ l.logged_at }}</td>
+        <td>{{ l.username }}</td>
+        <td style="direction:ltr;font-size:.82rem;">{{ l.ip or '—' }}</td>
+        <td>
+          {% if l.success %}
+            <span class="badge badge-green">✓ הצליח</span>
+          {% else %}
+            <span class="badge" style="background:#ffebee;color:#c00;">✗ נכשל</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" style="text-align:center;color:#aaa;padding:20px;">אין כניסות עדיין</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
 </div>
 
 <script>
@@ -195,8 +335,17 @@ function showTab(name, btn) {
 // Auto-open tab from hash
 const hash = location.hash.replace('#','');
 if (hash) {
-  const btn = [...document.querySelectorAll('.tab')].find(b => b.onclick.toString().includes("'"+hash+"'"));
+  const btn = [...document.querySelectorAll('.tab')].find(b => b.getAttribute('onclick') && b.getAttribute('onclick').includes("'"+hash+"'"));
   if (btn) showTab(hash, btn);
+}
+
+function toggleEdit(uid) {
+  const row = document.getElementById('edit-row-' + uid);
+  row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+}
+function toggleNotify(uid) {
+  const row = document.getElementById('notify-row-' + uid);
+  row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
 }
 </script>
 </body>

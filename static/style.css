@@ -594,7 +594,18 @@ input[type="password"]:focus {
 }
 
 .file-input-wrapper input[type="file"] {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+}
+
+.leaflet-popup-content {
+  font-family: 'Rubik', sans-serif;
+  font-weight: 400;
+  direction: rtl;
 }
 
 .file-input-label {
