@@ -235,10 +235,10 @@ def cosine_sim(a, b):
     return float(np.dot(np.array(a, dtype=np.float32), np.array(b, dtype=np.float32)))
 
 
-def push_notification(db, user_id, ntype, from_user_id=None, cat_id=None, photo=None, location=None, location_precise=None, tree_id=None):
+def push_notification(db, user_id, ntype, from_user_id=None, cat_id=None, photo=None, location=None, location_precise=None, tree_id=None, latitude=None, longitude=None):
     db.execute(
-        'INSERT INTO notifications (user_id, type, from_user_id, cat_id, photo, location, location_precise, tree_id) VALUES (?,?,?,?,?,?,?,?)',
-        (user_id, ntype, from_user_id, cat_id, photo, location, location_precise, tree_id)
+        'INSERT INTO notifications (user_id, type, from_user_id, cat_id, photo, location, location_precise, tree_id, latitude, longitude) VALUES (?,?,?,?,?,?,?,?,?,?)',
+        (user_id, ntype, from_user_id, cat_id, photo, location, location_precise, tree_id, latitude, longitude)
     )
     db.commit()
 
@@ -434,6 +434,14 @@ def init_db():
             pass
         try:
             db.execute('ALTER TABLE notifications ADD COLUMN related_id INTEGER')
+        except Exception:
+            pass
+        try:
+            db.execute('ALTER TABLE notifications ADD COLUMN latitude REAL')
+        except Exception:
+            pass
+        try:
+            db.execute('ALTER TABLE notifications ADD COLUMN longitude REAL')
         except Exception:
             pass
         db.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -1539,11 +1547,11 @@ def identify():
         location = request.form.get('location', '').strip() or None
         location_precise = request.form.get('location_precise', '').strip() or None
         try:
-            identify_lat = float(request.form.get('latitude')) if request.form.get('latitude') else None
+            identify_lat = float(request.form.get('identify_lat')) if request.form.get('identify_lat') else None
         except (TypeError, ValueError):
             identify_lat = None
         try:
-            identify_lng = float(request.form.get('longitude')) if request.form.get('longitude') else None
+            identify_lng = float(request.form.get('identify_lng')) if request.form.get('identify_lng') else None
         except (TypeError, ValueError):
             identify_lng = None
         existing_photo_id = request.form.get('existing_photo_id', '').strip()
@@ -1644,8 +1652,13 @@ def identify():
                 margin_conf = min(1.0, margin / 0.08)
                 return min(100, max(0, int((0.6 * abs_conf + 0.4 * margin_conf) * 100)))
 
-            identified = [
-                {
+            identified = []
+            for c in matched:
+                photos = db.execute(
+                    'SELECT filename FROM cat_photos WHERE cat_id=? ORDER BY id LIMIT 4',
+                    (c['cat_id'],)
+                ).fetchall()
+                identified.append({
                     'name': c['name'],
                     'cat_id': c['cat_id'],
                     'confidence': calc_confidence(c),
@@ -1653,35 +1666,13 @@ def identify():
                     'owner': c['owner'],
                     'owner_id': c['owner_id'],
                     'already_friends': c['already_friends'],
-                }
-                for c in matched
-            ]
+                    'photos': [p['filename'] for p in photos],
+                })
             session['identify_temp_url'] = temp_filename
             result = {'identified': identified, 'few_photos': few_photos_warning,
-                      'temp_filename': temp_filename}
-            # Notify owners of identified cats
-            notified = set()
-            for c in matched:
-                if not c['is_mine'] and c['owner_id'] not in notified:
-                    push_notification(db, c['owner_id'], 'identified',
-                                      from_user_id=uid, cat_id=c['cat_id'],
-                                      photo=temp_filename, location=location,
-                                      location_precise=location_precise)
-                    owner = db.execute('SELECT username, email FROM users WHERE id=?', (c['owner_id'],)).fetchone()
-                    if owner and owner['email']:
-                        loc_text = f'<p>📍 מיקום: {location}</p>' if location else ''
-                        send_email(
-                            to=owner['email'],
-                            subject=f'החתול שלך {c["name"]} זוהה! 🐱',
-                            body=f'''
-                            <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
-                              <h2>שלום {owner["username"]}!</h2>
-                              <p>החתול שלך <strong>{c["name"]}</strong> זוהה על ידי <strong>{session["username"]}</strong>.</p>
-                              {loc_text}
-                              <p><a href="https://catbook.pythonanywhere.com/notifications" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בהתראות</a></p>
-                            </div>'''
-                        )
-                    notified.add(c['owner_id'])
+                      'temp_filename': temp_filename, 'location': location,
+                      'location_precise': location_precise,
+                      'lat': identify_lat, 'lng': identify_lng}
         else:
             session['identify_temp_url'] = temp_filename
             result = {'identified': [], 'few_photos': False, 'temp_filename': temp_filename}
@@ -1800,6 +1791,56 @@ def identify_save_photo():
 
     flash(f'התמונה נוספה לחתול "{cat["name"]}" בהצלחה!')
     return redirect(url_for('cats'))
+
+
+@app.route('/identify/confirm', methods=['POST'])
+@login_required
+def identify_confirm():
+    uid = session['user_id']
+    db = get_db()
+    cat_id = request.form.get('cat_id', type=int)
+    temp_filename = request.form.get('temp_filename', '')
+    location = request.form.get('location', '').strip() or None
+    location_precise = request.form.get('location_precise', '').strip() or None
+    try:
+        lat = float(request.form.get('lat')) if request.form.get('lat') else None
+    except (TypeError, ValueError):
+        lat = None
+    try:
+        lng = float(request.form.get('lng')) if request.form.get('lng') else None
+    except (TypeError, ValueError):
+        lng = None
+
+    cat = db.execute(
+        'SELECT c.id, c.name, c.user_id, u.username, u.email FROM cats c JOIN users u ON u.id=c.user_id WHERE c.id=?',
+        (cat_id,)
+    ).fetchone()
+    if not cat:
+        flash('חתול לא נמצא')
+        return redirect(url_for('identify'))
+
+    if cat['user_id'] != uid:
+        push_notification(db, cat['user_id'], 'identified',
+                          from_user_id=uid, cat_id=cat_id,
+                          photo=temp_filename, location=location,
+                          location_precise=location_precise,
+                          latitude=lat, longitude=lng)
+        if cat['email']:
+            loc_text = f'<p>📍 מיקום: {location}</p>' if location else ''
+            send_email(
+                to=cat['email'],
+                subject=f'החתול שלך {cat["name"]} זוהה! 🐱',
+                body=f'''
+                <div dir="rtl" style="font-family:Arial,sans-serif;font-size:15px">
+                  <h2>שלום {cat["username"]}!</h2>
+                  <p>החתול שלך <strong>{cat["name"]}</strong> זוהה על ידי <strong>{session["username"]}</strong>.</p>
+                  {loc_text}
+                  <p><a href="https://catbook.pythonanywhere.com/notifications" style="background:#6a0dad;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none">צפה בהתראות</a></p>
+                </div>'''
+            )
+
+    flash(f'זיהוי {cat["name"]} אושר!')
+    return redirect(url_for('map_page'))
 
 
 # ---------- Friends ----------
@@ -3275,20 +3316,20 @@ def map_page():
             seen_sc.add(s['sc_id'])
             street_data.append(dict(s))
 
-    # Latest identified/similar notification per cat for user + friends
+    # Latest identified/similar notification per cat for user + friends, or spotted by user
     placeholders = ','.join('?' * len(visible_user_ids))
     cat_rows = db.execute(f'''
-        SELECT n.location, n.created_at, n.cat_id, c.name as cat_name,
+        SELECT n.location, n.latitude, n.longitude, n.created_at, n.cat_id, c.name as cat_name,
                u.id as owner_id, u.username,
                (SELECT filename FROM cat_photos WHERE cat_id=c.id LIMIT 1) as photo
         FROM notifications n
         JOIN cats c ON c.id = n.cat_id
         JOIN users u ON u.id = c.user_id
         WHERE n.type IN ('identified', 'similar')
-        AND n.location IS NOT NULL AND n.location != ''
-        AND c.user_id IN ({placeholders})
+        AND (n.location IS NOT NULL AND n.location != '' OR n.latitude IS NOT NULL)
+        AND (c.user_id IN ({placeholders}) OR n.from_user_id = ?)
         ORDER BY n.created_at DESC
-    ''', visible_user_ids).fetchall()
+    ''', visible_user_ids + [uid]).fetchall()
     seen_cats = set()
     cat_data = []
     for n in cat_rows:

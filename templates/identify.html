@@ -37,9 +37,16 @@
         {% endif %}
       </div>
 
+      <input type="hidden" id="identify-lat-field" name="identify_lat" value="">
+      <input type="hidden" id="identify-lng-field" name="identify_lng" value="">
+
       <div class="form-group" style="margin-top:1.2rem">
         <label>כתובת <span style="font-weight:400;color:var(--gray)">(אופציונלי)</span></label>
-        <input type="text" id="identify-location-input" name="location" placeholder="לדוג׳: רחוב הרצל 1, תל אביב" style="margin-top:0.35rem" oninput="onIdentifyLocationInput()">
+        <div style="display:flex;gap:0.4rem;margin-top:0.35rem">
+          <input type="text" id="identify-location-input" name="location" placeholder="לדוג׳: רחוב הרצל 1, תל אביב" style="flex:1" oninput="onIdentifyLocationInput()">
+          <button type="button" onclick="openPickerMap('identify-location-input','identify-lat-field','identify-lng-field','identify-location-map')"
+                  style="border:1.5px solid var(--purple-light);border-radius:8px;padding:0.4rem 0.7rem;background:#fff;cursor:pointer;font-size:1rem">🗺️</button>
+        </div>
         <div id="identify-location-map" style="display:none;height:200px;border-radius:12px;overflow:hidden;margin-top:0.5rem"></div>
       </div>
 
@@ -97,10 +104,28 @@
               <span class="result-owner result-owner--mine">שלי</span>
             {% endif %}
           </div>
+          {% if cat.photos %}
+          <div style="display:flex;gap:6px;margin-bottom:0.6rem;flex-wrap:wrap">
+            {% for ph in cat.photos %}
+            <img src="{{ photo_url(ph) }}" style="width:70px;height:70px;object-fit:cover;border-radius:8px;border:2px solid var(--purple-light)">
+            {% endfor %}
+          </div>
+          {% endif %}
           <div class="confidence-bar-wrap">
             <div class="confidence-bar" style="width: {{ cat.confidence }}%"></div>
           </div>
           <div class="confidence-label">ביטחון: {{ cat.confidence }}%</div>
+          {% if not cat.is_mine %}
+          <form method="POST" action="{{ url_for('identify_confirm') }}" style="margin-top:0.75rem">
+            <input type="hidden" name="cat_id" value="{{ cat.cat_id }}">
+            <input type="hidden" name="temp_filename" value="{{ result.temp_filename or '' }}">
+            <input type="hidden" name="location" value="{{ result.location or '' }}">
+            <input type="hidden" name="location_precise" value="{{ result.location_precise or '' }}">
+            <input type="hidden" name="lat" value="{{ result.lat or '' }}">
+            <input type="hidden" name="lng" value="{{ result.lng or '' }}">
+            <button type="submit" class="btn" style="width:100%;background:#2a7a2a;color:#fff">✅ אשר — זה הוא! (הוסף למפה)</button>
+          </form>
+          {% endif %}
           {% if result.temp_filename and cat.is_mine %}
           <form method="POST" action="{{ url_for('identify_save_photo') }}" style="margin-top:0.75rem">
             <input type="hidden" name="cat_id" value="{{ cat.cat_id }}">
@@ -338,6 +363,8 @@ function onIdentifyLocationInput() {
         const lng = parseFloat(data[0].lon);
         const mapDiv = document.getElementById('identify-location-map');
         mapDiv.style.display = 'block';
+        document.getElementById('identify-lat-field').value = lat;
+        document.getElementById('identify-lng-field').value = lng;
         if (!identifyLocMap) {
           identifyLocMap = L.map('identify-location-map').setView([lat, lng], 15);
           L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {

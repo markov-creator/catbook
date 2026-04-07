@@ -82,7 +82,10 @@ for (const s of STREET_DATA) {
   }
 }
 for (const c of CAT_DATA) {
-  if (c.location) {
+  if (c.latitude && c.longitude) {
+    addMarker(c.latitude, c.longitude, catPopup(c), purpleIcon);
+    placed++;
+  } else if (c.location) {
     queue.push({ text: c.location, popup: catPopup(c), icon: purpleIcon });
   }
 }
